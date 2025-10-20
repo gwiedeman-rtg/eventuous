@@ -15,6 +15,7 @@ public class PersistenceEventSource : EventSource {
     const int UnableToStoreAggregateId = 5;
     const int UnableToReadAggregateId  = 6;
     const int UnableToAppendEventsId   = 7;
+    const int UnableToPublishEventId   = 8;
 
     [NonEvent]
     public void UnableToLoadAggregate<T, TState>(StreamName streamName, Exception exception) where T : Aggregate<TState> where TState : State<TState>, new() {
@@ -36,6 +37,11 @@ public class PersistenceEventSource : EventSource {
         if (IsEnabled(EventLevel.Warning, EventKeywords.All)) UnableToLoadStream(streamName, exception.ToString());
     }
 
+    [NonEvent]
+    public void UnableToPublishEvent(StreamName streamName, string handlerName, Exception exception) {
+        if (IsEnabled(EventLevel.Warning, EventKeywords.All)) UnableToPublishEvent(streamName, handlerName, exception.ToString());
+    }
+
     [Event(UnableToAppendEventsId, Message = "Unable to append events to {0}: {1}", Level = EventLevel.Error)]
     void UnableToAppendEvents(string stream, string exception) => WriteEvent(UnableToAppendEventsId, stream, exception);
 
@@ -47,4 +53,7 @@ public class PersistenceEventSource : EventSource {
 
     [Event(UnableToLoadStreamId, Message = "Unable to load stream {0}: {1}", Level = EventLevel.Warning)]
     void UnableToLoadStream(string stream, string exception) => WriteEvent(UnableToLoadStreamId, stream, exception);
+
+    [Event(UnableToPublishEventId, Message = "Unable to publish event to handler {1} for stream {0}: {2}", Level = EventLevel.Warning)]
+    void UnableToPublishEvent(string stream, string handlerName, string exception) => WriteEvent(UnableToPublishEventId, stream, handlerName, exception);
 }
