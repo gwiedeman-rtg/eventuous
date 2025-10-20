@@ -36,6 +36,8 @@ public static class ServiceCollectionExtensions {
                 options.EventHubName,
                 options.BlobStorageConnectionString,
                 options.CaptureContainerName,
+                options.ConsumerGroup,
+                options.UseRealtimeReading,
                 serializer,
                 metaSerializer,
                 logger
@@ -50,16 +52,20 @@ public static class ServiceCollectionExtensions {
     /// </summary>
     /// <param name="services">Service collection</param>
     /// <param name="producerClient">Event Hub producer client</param>
+    /// <param name="consumerClient">Event Hub consumer client</param>
     /// <param name="blobServiceClient">Blob service client</param>
     /// <param name="eventHubName">Event Hub name</param>
     /// <param name="captureContainerName">Capture container name</param>
+    /// <param name="useRealtimeReading">Whether to use real-time reading from Event Hubs</param>
     /// <returns>Service collection for chaining</returns>
     public static IServiceCollection AddAzureEventHubsEventStore(
             this IServiceCollection services,
             EventHubProducerClient  producerClient,
+            EventHubConsumerClient  consumerClient,
             BlobServiceClient       blobServiceClient,
             string                  eventHubName,
-            string                  captureContainerName
+            string                  captureContainerName,
+            bool                    useRealtimeReading = true
         ) {
         services.AddSingleton<IEventStore>(serviceProvider => {
             var serializer = serviceProvider.GetService<IEventSerializer>();
@@ -68,9 +74,11 @@ public static class ServiceCollectionExtensions {
 
             return new AzureEventHubsEventStore(
                 producerClient,
+                consumerClient,
                 blobServiceClient,
                 eventHubName,
                 captureContainerName,
+                useRealtimeReading,
                 serializer,
                 metaSerializer,
                 logger

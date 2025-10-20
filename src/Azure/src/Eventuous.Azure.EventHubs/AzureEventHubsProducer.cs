@@ -10,7 +10,7 @@ namespace Eventuous.Azure.EventHubs;
 /// <summary>
 /// Azure Event Hubs producer implementation
 /// </summary>
-public class AzureEventHubsProducer : IProducer<AzureEventHubsProduceOptions> {
+public class AzureEventHubsProducer : IProducer<AzureEventHubsProduceOptions>, IDisposable {
     readonly EventHubProducerClient           _producerClient;
     readonly IEventSerializer                 _serializer;
     readonly IMetadataSerializer              _metaSerializer;
@@ -156,6 +156,10 @@ public class AzureEventHubsProducer : IProducer<AzureEventHubsProduceOptions> {
         }
 
         return eventData;
+    }
+
+    public void Dispose() {
+        _producerClient?.Dispose();
     }
 }
 

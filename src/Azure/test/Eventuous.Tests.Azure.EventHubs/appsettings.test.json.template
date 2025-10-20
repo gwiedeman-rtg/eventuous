@@ -1,0 +1,18 @@
+{
+  "Azure": {
+    "EventHubs": {
+      "ConnectionString": "Endpoint=sb://your-namespace.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=your-key",
+      "EventHubName": "eventuous-test-hub"
+    },
+    "BlobStorage": {
+      "ConnectionString": "DefaultEndpointsProtocol=https;AccountName=youraccount;AccountKey=your-key;EndpointSuffix=core.windows.net",
+      "CaptureContainer": "eventhubs-capture"
+    }
+  },
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Eventuous.Azure.EventHubs": "Debug"
+    }
+  }
+}

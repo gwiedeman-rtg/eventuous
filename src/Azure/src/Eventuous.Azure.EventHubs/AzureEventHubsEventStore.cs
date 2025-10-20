@@ -14,30 +14,38 @@ namespace Eventuous.Azure.EventHubs;
 /// <summary>
 /// Azure Event Hubs implementation of <see cref="IEventStore"/> with Capture support
 /// </summary>
-public class AzureEventHubsEventStore : IEventStore {
+public class AzureEventHubsEventStore : IEventStore, IDisposable {
     readonly ILogger<AzureEventHubsEventStore>? _logger;
     readonly EventHubProducerClient             _producerClient;
     readonly BlobServiceClient                  _blobServiceClient;
+    readonly AzureEventHubsConsumer             _consumer;
     readonly IEventSerializer                   _serializer;
     readonly IMetadataSerializer                _metaSerializer;
     readonly string                             _eventHubName;
     readonly string                             _captureContainerName;
+    readonly bool                               _useRealtimeReading;
+
+    bool _disposed;
 
     /// <summary>
     /// Initialize the event store with Event Hub producer and Blob storage client for reading captured events
     /// </summary>
     /// <param name="producerClient">Event Hub producer client instance</param>
+    /// <param name="consumerClient">Event Hub consumer client for real-time reading</param>
     /// <param name="blobServiceClient">Blob service client for reading captured events</param>
     /// <param name="eventHubName">Event Hub name</param>
     /// <param name="captureContainerName">Blob container name where captured events are stored</param>
+    /// <param name="useRealtimeReading">Whether to use real-time reading from Event Hubs for recent events</param>
     /// <param name="serializer">Optional event serializer. When not provided, the default serializer will be used.</param>
     /// <param name="metaSerializer">Optional metadata serializer. When not provided, the default serializer will be used.</param>
     /// <param name="logger">Optional logger</param>
     public AzureEventHubsEventStore(
             EventHubProducerClient              producerClient,
+            EventHubConsumerClient              consumerClient,
             BlobServiceClient                   blobServiceClient,
             string                              eventHubName,
             string                              captureContainerName,
+            bool                                useRealtimeReading = true,
             IEventSerializer?                   serializer     = null,
             IMetadataSerializer?                metaSerializer = null,
             ILogger<AzureEventHubsEventStore>?  logger         = null
@@ -47,8 +55,10 @@ public class AzureEventHubsEventStore : IEventStore {
         _blobServiceClient    = Ensure.NotNull(blobServiceClient);
         _eventHubName         = Ensure.NotEmptyString(eventHubName);
         _captureContainerName = Ensure.NotEmptyString(captureContainerName);
+        _useRealtimeReading   = useRealtimeReading;
         _serializer           = serializer     ?? DefaultEventSerializer.Instance;
         _metaSerializer       = metaSerializer ?? DefaultMetadataSerializer.Instance;
+        _consumer             = new AzureEventHubsConsumer(consumerClient, serializer, metaSerializer, logger);
     }
 
     /// <summary>
@@ -58,6 +68,8 @@ public class AzureEventHubsEventStore : IEventStore {
     /// <param name="eventHubName">Event Hub name</param>
     /// <param name="blobStorageConnectionString">Blob storage connection string</param>
     /// <param name="captureContainerName">Blob container name where captured events are stored</param>
+    /// <param name="consumerGroup">Consumer group for reading events (default: $Default)</param>
+    /// <param name="useRealtimeReading">Whether to use real-time reading from Event Hubs for recent events</param>
     /// <param name="serializer">Optional event serializer. When not provided, the default serializer will be used.</param>
     /// <param name="metaSerializer">Optional metadata serializer. When not provided, the default serializer will be used.</param>
     /// <param name="logger">Optional logger</param>
@@ -66,14 +78,18 @@ public class AzureEventHubsEventStore : IEventStore {
             string                              eventHubName,
             string                              blobStorageConnectionString,
             string                              captureContainerName,
+            string                              consumerGroup = EventHubConsumerClient.DefaultConsumerGroupName,
+            bool                                useRealtimeReading = true,
             IEventSerializer?                   serializer     = null,
             IMetadataSerializer?                metaSerializer = null,
             ILogger<AzureEventHubsEventStore>?  logger         = null
         ) : this(
             new EventHubProducerClient(Ensure.NotEmptyString(eventHubConnectionString), Ensure.NotEmptyString(eventHubName)),
+            new EventHubConsumerClient(consumerGroup, Ensure.NotEmptyString(eventHubConnectionString), Ensure.NotEmptyString(eventHubName)),
             new BlobServiceClient(Ensure.NotEmptyString(blobStorageConnectionString)),
             eventHubName,
             captureContainerName,
+            useRealtimeReading,
             serializer,
             metaSerializer,
             logger
@@ -157,39 +173,40 @@ public class AzureEventHubsEventStore : IEventStore {
         ) {
         try {
             var events = new List<StreamEvent>();
-            var containerClient = _blobServiceClient.GetBlobContainerClient(_captureContainerName);
-            
-            // Get captured event blobs for this stream
-            var blobPrefix = GetBlobPrefix(stream);
-            var blobs = containerClient.GetBlobsAsync(prefix: blobPrefix, cancellationToken: cancellationToken);
-            
-            var processedEvents = 0;
-            var skippedEvents = 0;
 
-            await foreach (var blobItem in blobs) {
-                if (events.Count >= count) break;
+            // First, try to read from real-time Event Hubs if enabled
+            if (_useRealtimeReading) {
+                try {
+                    var realtimeEvents = await _consumer.ReadEventsFromStream(
+                        stream,
+                        EventPosition.Earliest,
+                        count,
+                        TimeSpan.FromSeconds(5),
+                        cancellationToken
+                    ).NoContext();
 
-                var blobClient = containerClient.GetBlobClient(blobItem.Name);
-                var streamEvents = await ReadEventsFromBlob(blobClient, stream, cancellationToken).NoContext();
-
-                foreach (var streamEvent in streamEvents) {
-                    if (skippedEvents < start.Value) {
-                        skippedEvents++;
-                        continue;
+                    events.AddRange(realtimeEvents.Skip((int)start.Value).Take(count));
+                    
+                    if (events.Count >= count) {
+                        return events.ToArray();
                     }
-
-                    if (events.Count >= count) break;
-
-                    events.Add(streamEvent with { Position = processedEvents });
-                    processedEvents++;
+                } catch (Exception ex) {
+                    _logger?.LogWarning(ex, "Failed to read real-time events from stream {Stream}, falling back to captured events", stream);
                 }
+            }
+
+            // If we don't have enough events from real-time, read from captured events
+            var remainingCount = count - events.Count;
+            if (remainingCount > 0) {
+                var capturedEvents = await ReadEventsFromCapture(stream, start, remainingCount, cancellationToken).NoContext();
+                events.AddRange(capturedEvents);
             }
 
             if (!events.Any() && failIfNotFound) {
                 throw new StreamNotFound(stream);
             }
 
-            return events.ToArray();
+            return events.Take(count).ToArray();
         } catch (StreamNotFound) {
             throw;
         } catch (Exception ex) {
@@ -298,6 +315,44 @@ public class AzureEventHubsEventStore : IEventStore {
         return eventData;
     }
 
+    async Task<StreamEvent[]> ReadEventsFromCapture(
+            StreamName        stream,
+            StreamReadPosition start,
+            int               count,
+            CancellationToken cancellationToken
+        ) {
+        var events = new List<StreamEvent>();
+        var containerClient = _blobServiceClient.GetBlobContainerClient(_captureContainerName);
+        
+        // Get captured event blobs for this stream
+        var blobPrefix = GetBlobPrefix(stream);
+        var blobs = containerClient.GetBlobsAsync(prefix: blobPrefix, cancellationToken: cancellationToken);
+        
+        var processedEvents = 0;
+        var skippedEvents = 0;
+
+        await foreach (var blobItem in blobs) {
+            if (events.Count >= count) break;
+
+            var blobClient = containerClient.GetBlobClient(blobItem.Name);
+            var streamEvents = await ReadEventsFromBlob(blobClient, stream, cancellationToken).NoContext();
+
+            foreach (var streamEvent in streamEvents) {
+                if (skippedEvents < start.Value) {
+                    skippedEvents++;
+                    continue;
+                }
+
+                if (events.Count >= count) break;
+
+                events.Add(streamEvent with { Position = processedEvents });
+                processedEvents++;
+            }
+        }
+
+        return events.ToArray();
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     string GetBlobPrefix(StreamName stream) {
         // Azure Event Hubs Capture creates blobs with a specific naming pattern
@@ -386,5 +441,13 @@ public class AzureEventHubsEventStore : IEventStore {
             _logger?.LogWarning(ex, "Failed to parse captured event: {EventLine}", eventLine);
             return null;
         }
+    }
+
+    public void Dispose() {
+        if (_disposed) return;
+        
+        _consumer.Dispose();
+        _producerClient.Dispose();
+        _disposed = true;
     }
 }

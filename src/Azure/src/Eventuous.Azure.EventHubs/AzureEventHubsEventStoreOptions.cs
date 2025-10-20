@@ -28,6 +28,16 @@ public class AzureEventHubsEventStoreOptions {
     public string CaptureContainerName { get; set; } = string.Empty;
 
     /// <summary>
+    /// Consumer group for reading events (default: $Default)
+    /// </summary>
+    public string ConsumerGroup { get; set; } = EventHubConsumerClient.DefaultConsumerGroupName;
+
+    /// <summary>
+    /// Whether to use real-time reading from Event Hubs for recent events
+    /// </summary>
+    public bool UseRealtimeReading { get; set; } = true;
+
+    /// <summary>
     /// Validate the configuration
     /// </summary>
     public void Validate() {
