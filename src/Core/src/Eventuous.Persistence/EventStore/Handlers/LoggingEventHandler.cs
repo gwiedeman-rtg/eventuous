@@ -41,7 +41,7 @@ public class EventHandlerEventSource : EventSource {
     const int EventHandledId = 1;
 
     [Event(EventHandledId, Message = "Event handled - Stream: {0}, EventId: {1}, EventType: {2}, Position: {3}", Level = EventLevel.Informational)]
-    public void EventHandled(string streamName, string eventId, string eventType, int position) 
+    public void EventHandled(string streamName, string eventId, string eventType, long position)
         => WriteEvent(EventHandledId, streamName, eventId, eventType, position);
 }
 
@@ -70,7 +70,7 @@ public class DelegateEventHandler : IEventStoreHandler {
     public DelegateEventHandler(string name, Action<StreamName, StreamEvent> handler) {
         _name = name ?? throw new ArgumentNullException(nameof(name));
         if (handler == null) throw new ArgumentNullException(nameof(handler));
-        
+
         _handler = (streamName, streamEvent, _) => {
             handler(streamName, streamEvent);
             return Task.CompletedTask;

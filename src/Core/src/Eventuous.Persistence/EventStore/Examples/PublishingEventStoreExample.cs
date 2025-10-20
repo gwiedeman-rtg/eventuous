@@ -36,8 +36,8 @@ public static class PublishingEventStoreExample {
         // Append events - handlers will be called automatically
         var streamName = new StreamName("user-123");
         var events = new[] {
-            new NewStreamEvent(Guid.NewGuid(), new UserRegistered("john@example.com"), new { CorrelationId = Guid.NewGuid() }),
-            new NewStreamEvent(Guid.NewGuid(), new UserEmailVerified("john@example.com"), new { CorrelationId = Guid.NewGuid() })
+            new NewStreamEvent(Guid.NewGuid(), new UserRegistered("john@example.com"), new Metadata().With("CorrelationId", Guid.NewGuid())),
+            new NewStreamEvent(Guid.NewGuid(), new UserEmailVerified("john@example.com"), new Metadata().With("CorrelationId", Guid.NewGuid()))
         };
 
         await eventStore.AppendEvents(streamName, ExpectedStreamVersion.NoStream, events, CancellationToken.None);
@@ -72,7 +72,7 @@ public static class PublishingEventStoreExample {
         // Process events
         var streamName = new StreamName("order-456");
         var events = new[] {
-            new NewStreamEvent(Guid.NewGuid(), new OrderPlaced("ORDER-123", 99.99m), new {})
+            new NewStreamEvent(Guid.NewGuid(), new OrderPlaced("ORDER-123", 99.99m), new Metadata())
         };
 
         await eventStore.AppendEvents(streamName, ExpectedStreamVersion.NoStream, events, CancellationToken.None);
@@ -96,12 +96,12 @@ public static class PublishingEventStoreExample {
                     Console.WriteLine($"Sending welcome email to {userRegistered.Email}");
                     // Send welcome email logic here
                     break;
-                    
+
                 case OrderPlaced orderPlaced:
                     Console.WriteLine($"Sending order confirmation for {orderPlaced.OrderId}");
                     // Send order confirmation logic here
                     break;
-                    
+
                 default:
                     Console.WriteLine($"No email notification needed for event type {streamEvent.Payload?.GetType().Name}");
                     break;
