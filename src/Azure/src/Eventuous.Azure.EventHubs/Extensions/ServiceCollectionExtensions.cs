@@ -36,16 +36,16 @@ public static class ServiceCollectionExtensions {
             var logger = serviceProvider.GetService<ILogger<AzureEventHubsEventStore>>();
 
             return new AzureEventHubsEventStore(
-                options.EventHubConnectionString,
+                new EventHubProducerClient(options.EventHubConnectionString, options.EventHubName),
+                new EventHubConsumerClient(options.ConsumerGroup, options.EventHubConnectionString, options.EventHubName),
+                new BlobServiceClient(options.BlobStorageConnectionString),
                 options.EventHubName,
-                options.BlobStorageConnectionString,
-                options.TableStorageConnectionString,
                 options.CaptureContainerName,
-                options.ConsumerGroup,
                 options.UseRealtimeReading,
                 serializer,
                 metaSerializer,
-                logger
+                logger,
+                serviceProvider.GetService<ILoggerFactory>()
             );
         });
 

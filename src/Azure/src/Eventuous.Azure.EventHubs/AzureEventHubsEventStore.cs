@@ -5,6 +5,15 @@ using System.Runtime.CompilerServices;
 using System.Runtime.Serialization;
 using System.Text;
 using System.Text.Json;
+using Azure;
+using Azure.Messaging.EventHubs;
+using Azure.Messaging.EventHubs.Producer;
+using Azure.Messaging.EventHubs.Consumer;
+using Azure.Storage.Blobs;
+using Eventuous.Diagnostics;
+using Eventuous.Diagnostics.Tracing;
+using Eventuous.Producers;
+using Microsoft.Extensions.Logging;
 using Eventuous.Tools;
 using static Eventuous.DeserializationResult;
 using static Eventuous.Diagnostics.PersistenceEventSource;
@@ -138,12 +147,12 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
 
             foreach (var streamEvent in events) {
                 var eventData = ToEventData(streamEvent, stream);
-                
+
                 if (!eventDataBatch.TryAdd(eventData)) {
                     // If the batch is full, send it and create a new batch
                     await _producerClient.SendAsync(eventDataBatch, cancellationToken).NoContext();
                     eventDataBatch = await _producerClient.CreateBatchAsync(cancellationToken).NoContext();
-                    
+
                     if (!eventDataBatch.TryAdd(eventData)) {
                         throw new InvalidOperationException("Event is too large to fit in a batch");
                     }
@@ -190,7 +199,7 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
                     ).NoContext();
 
                     events.AddRange(realtimeEvents.Skip((int)start.Value).Take(count));
-                    
+
                     if (events.Count >= count) {
                         return events.ToArray();
                     }
@@ -215,11 +224,11 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
             throw;
         } catch (Exception ex) {
             _logger?.LogError(ex, "Failed to read {Count} events from stream {Stream} starting at {Start}", count, stream, start);
-            
+
             if (failIfNotFound) {
                 throw new ReadFromStreamException(stream, ex);
             }
-            
+
             return [];
         }
     }
@@ -235,11 +244,11 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
         try {
             var allEvents = new List<StreamEvent>();
             var containerClient = _blobServiceClient.GetBlobContainerClient(_captureContainerName);
-            
+
             // Get captured event blobs for this stream
             var blobPrefix = GetBlobPrefix(stream);
             var blobs = containerClient.GetBlobsAsync(prefix: blobPrefix, cancellationToken: cancellationToken);
-            
+
             // Collect all events first
             await foreach (var blobItem in blobs) {
                 var blobClient = containerClient.GetBlobClient(blobItem.Name);
@@ -265,11 +274,11 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
             throw;
         } catch (Exception ex) {
             _logger?.LogError(ex, "Failed to read {Count} events backwards from stream {Stream} starting at {Start}", count, stream, start);
-            
+
             if (failIfNotFound) {
                 throw new ReadFromStreamException(stream, ex);
             }
-            
+
             return [];
         }
     }
@@ -304,14 +313,13 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
 
         var eventData = new EventData(payload) {
             MessageId = streamEvent.Id.ToString(),
-            ContentType = contentType,
-            PartitionKey = stream.ToString() // Use stream name as partition key for stream isolation
+            ContentType = contentType
         };
 
         // Add custom properties for event type and metadata
         eventData.Properties["EventType"] = eventType;
         eventData.Properties["StreamName"] = stream.ToString();
-        
+
         if (metadata.Length > 0) {
             eventData.Properties["Metadata"] = Convert.ToBase64String(metadata);
         }
@@ -327,11 +335,11 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
         ) {
         var events = new List<StreamEvent>();
         var containerClient = _blobServiceClient.GetBlobContainerClient(_captureContainerName);
-        
+
         // Get captured event blobs for this stream
         var blobPrefix = GetBlobPrefix(stream);
         var blobs = containerClient.GetBlobsAsync(prefix: blobPrefix, cancellationToken: cancellationToken);
-        
+
         var processedEvents = 0;
         var skippedEvents = 0;
 
@@ -366,15 +374,15 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
 
     async Task<List<StreamEvent>> ReadEventsFromBlob(BlobClient blobClient, StreamName stream, CancellationToken cancellationToken) {
         var events = new List<StreamEvent>();
-        
+
         try {
             var response = await blobClient.DownloadContentAsync(cancellationToken).NoContext();
             var content = response.Value.Content.ToString();
-            
+
             // Parse AVRO format used by Event Hubs Capture
             // This is a simplified implementation - in production, you'd use proper AVRO parsing
             var lines = content.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-            
+
             foreach (var line in lines) {
                 try {
                     var eventData = ParseCapturedEvent(line, stream);
@@ -401,10 +409,10 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
 
             // Extract properties from the captured event
             if (!root.TryGetProperty("Properties", out var properties)) return null;
-            
+
             if (!properties.TryGetProperty("StreamName", out var streamNameProp)) return null;
             var streamName = streamNameProp.GetString();
-            
+
             if (streamName != targetStream.ToString()) return null;
 
             if (!properties.TryGetProperty("EventType", out var eventTypeProp)) return null;
@@ -418,7 +426,7 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
 
             // Deserialize the event
             var deserialized = _serializer.DeserializeEvent(bodyBytes, eventType, contentType);
-            
+
             if (deserialized is not SuccessfullyDeserialized success) return null;
 
             // Extract metadata
@@ -449,9 +457,9 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
 
     public void Dispose() {
         if (_disposed) return;
-        
+
         _consumer.Dispose();
-        _producerClient.Dispose();
+        _producerClient.DisposeAsync().AsTask().Wait();
         _disposed = true;
     }
 }

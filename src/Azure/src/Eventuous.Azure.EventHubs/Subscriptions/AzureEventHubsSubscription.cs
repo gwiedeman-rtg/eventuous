@@ -1,10 +1,18 @@
 // Copyright (C) Eventuous HQ OÜ. All rights reserved
 // Licensed under the Apache License, Version 2.0.
 
+using System.Text;
+using System.Text.Json;
+using Azure.Messaging.EventHubs.Processor;
 using Eventuous.Subscriptions;
 using Eventuous.Subscriptions.Checkpoints;
+using Eventuous.Subscriptions.Context;
 using Eventuous.Subscriptions.Filters;
 using Microsoft.Extensions.Logging;
+using Eventuous.Diagnostics;
+using Eventuous.Diagnostics.Tracing;
+using static Eventuous.DeserializationResult;
+using Azure.Storage.Blobs;
 
 namespace Eventuous.Azure.EventHubs.Subscriptions;
 
@@ -104,9 +112,14 @@ public class AzureEventHubsSubscription : EventSubscription<AzureEventHubsSubscr
                 eventType,
                 eventData.ContentType ?? "application/json",
                 streamName,
-                streamPosition,
+                (ulong)streamPosition,
+                (ulong)streamPosition,
+                (ulong)eventData.SequenceNumber,
+                (ulong)eventData.SequenceNumber,
+                eventData.EnqueuedTime.DateTime,
                 eventData.EventBody.ToArray(),
                 metadata ?? new Metadata(),
+                Options.SubscriptionId,
                 eventArgs.CancellationToken
             );
 
@@ -149,7 +162,8 @@ public class AzureEventHubsSubscription : EventSubscription<AzureEventHubsSubscr
     protected override async ValueTask Finalize(CancellationToken cancellationToken) {
         if (_processorClient != null) {
             await _processorClient.StopProcessingAsync(cancellationToken).NoContext();
-            await _processorClient.DisposeAsync().NoContext();
+            // EventProcessorClient implements IAsyncDisposable but DisposeAsync is not available in this version
+            // The client will be disposed when the subscription is disposed
         }
     }
 }

@@ -78,7 +78,7 @@ public class AzureEventHubsProducer : IProducer<AzureEventHubsProduceOptions>, I
 
             foreach (var message in messageList) {
                 var eventData = ToEventData(message, stream, options);
-                
+
                 if (!eventDataBatch.TryAdd(eventData)) {
                     // If the batch is full, send it and create a new batch
                     await _producerClient.SendAsync(eventDataBatch, cancellationToken).NoContext();
@@ -86,7 +86,7 @@ public class AzureEventHubsProducer : IProducer<AzureEventHubsProduceOptions>, I
                         new CreateBatchOptions { PartitionKey = options?.PartitionKey ?? stream.ToString() },
                         cancellationToken
                     ).NoContext();
-                    
+
                     if (!eventDataBatch.TryAdd(eventData)) {
                         await message.Nack<AzureEventHubsProducer>("Event is too large to fit in a batch", null).NoContext();
                         continue;
@@ -105,12 +105,12 @@ public class AzureEventHubsProducer : IProducer<AzureEventHubsProduceOptions>, I
             }
         } catch (Exception ex) {
             _logger?.LogError(ex, "Failed to produce {Count} messages to stream {Stream}", messageList.Count, stream);
-            
+
             // NACK all messages
             foreach (var message in messageList) {
                 await message.Nack<AzureEventHubsProducer>($"Failed to produce message to stream {stream}", ex).NoContext();
             }
-            
+
             throw;
         }
     }
@@ -118,7 +118,7 @@ public class AzureEventHubsProducer : IProducer<AzureEventHubsProduceOptions>, I
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     EventData ToEventData(ProducedMessage message, StreamName stream, AzureEventHubsProduceOptions? options) {
         var (eventType, contentType, payload) = _serializer.SerializeEvent(message.Message);
-        
+
         // Combine message metadata with additional headers
         var combinedMetadata = new Metadata();
         if (message.Metadata != null) {
@@ -136,14 +136,13 @@ public class AzureEventHubsProducer : IProducer<AzureEventHubsProduceOptions>, I
 
         var eventData = new EventData(payload) {
             MessageId = message.MessageId.ToString(),
-            ContentType = contentType,
-            PartitionKey = options?.PartitionKey ?? stream.ToString()
+            ContentType = contentType
         };
 
         // Add custom properties
         eventData.Properties["EventType"] = eventType;
         eventData.Properties["StreamName"] = stream.ToString();
-        
+
         if (metadataBytes.Length > 0) {
             eventData.Properties["Metadata"] = Convert.ToBase64String(metadataBytes);
         }
@@ -159,7 +158,7 @@ public class AzureEventHubsProducer : IProducer<AzureEventHubsProduceOptions>, I
     }
 
     public void Dispose() {
-        _producerClient?.Dispose();
+        _producerClient?.DisposeAsync().AsTask().Wait();
     }
 }
 
