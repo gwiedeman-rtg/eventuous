@@ -284,7 +284,7 @@ public class AzureEventHubsConsumer : IDisposable {
         
         _cancellationTokenSource.Cancel();
         _cancellationTokenSource.Dispose();
-        _consumerClient.Dispose();
+        _consumerClient.DisposeAsync().GetAwaiter().GetResult();
         _disposed = true;
     }
 }

@@ -1,16 +1,14 @@
 // Copyright (C) Eventuous HQ OÜ. All rights reserved
 // Licensed under the Apache License, Version 2.0.
 
+using Eventuous.Subscriptions;
+
 namespace Eventuous.Azure.EventHubs.Subscriptions;
 
 /// <summary>
 /// Options for Azure Event Hubs subscription
 /// </summary>
-public class AzureEventHubsSubscriptionOptions {
-    /// <summary>
-    /// Subscription ID
-    /// </summary>
-    public string SubscriptionId { get; set; } = string.Empty;
+public record AzureEventHubsSubscriptionOptions : SubscriptionOptions {
     /// <summary>
     /// Event Hub connection string
     /// </summary>

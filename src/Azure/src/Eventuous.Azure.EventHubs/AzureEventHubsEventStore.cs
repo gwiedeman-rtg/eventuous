@@ -14,17 +14,17 @@ namespace Eventuous.Azure.EventHubs;
 /// <summary>
 /// Azure Event Hubs implementation of <see cref="IEventStore"/> with Capture support
 /// </summary>
-public class AzureEventHubsEventStore : IEventStore, IDisposable {
+public class AzureEventHubsEventStore : IEventStore,IDisposable {
     readonly ILogger<AzureEventHubsEventStore>? _logger;
     readonly EventHubProducerClient             _producerClient;
     readonly BlobServiceClient                  _blobServiceClient;
-    readonly TableServiceClient                 _tableServiceClient;
     readonly AzureEventHubsConsumer             _consumer;
     readonly IEventSerializer                   _serializer;
     readonly IMetadataSerializer                _metaSerializer;
     readonly string                             _eventHubName;
     readonly string                             _captureContainerName;
     readonly bool                               _useRealtimeReading;
+    readonly ILoggerFactory?                    _loggerFactory;
 
     bool _disposed;
 
@@ -34,35 +34,35 @@ public class AzureEventHubsEventStore : IEventStore, IDisposable {
     /// <param name="producerClient">Event Hub producer client instance</param>
     /// <param name="consumerClient">Event Hub consumer client for real-time reading</param>
     /// <param name="blobServiceClient">Blob service client for reading captured events</param>
-    /// <param name="tableServiceClient">Table service client for stream metadata and versioning</param>
     /// <param name="eventHubName">Event Hub name</param>
     /// <param name="captureContainerName">Blob container name where captured events are stored</param>
     /// <param name="useRealtimeReading">Whether to use real-time reading from Event Hubs for recent events</param>
     /// <param name="serializer">Optional event serializer. When not provided, the default serializer will be used.</param>
     /// <param name="metaSerializer">Optional metadata serializer. When not provided, the default serializer will be used.</param>
     /// <param name="logger">Optional logger</param>
+    /// <param name="loggerFactory"></param>
     public AzureEventHubsEventStore(
             EventHubProducerClient              producerClient,
             EventHubConsumerClient              consumerClient,
             BlobServiceClient                   blobServiceClient,
-            TableServiceClient                  tableServiceClient,
             string                              eventHubName,
             string                              captureContainerName,
             bool                                useRealtimeReading = true,
             IEventSerializer?                   serializer     = null,
             IMetadataSerializer?                metaSerializer = null,
-            ILogger<AzureEventHubsEventStore>?  logger         = null
+            ILogger<AzureEventHubsEventStore>?  logger         = null,
+            ILoggerFactory?                     loggerFactory = null
         ) {
         _logger               = logger;
         _producerClient       = Ensure.NotNull(producerClient);
         _blobServiceClient    = Ensure.NotNull(blobServiceClient);
-        _tableServiceClient   = Ensure.NotNull(tableServiceClient);
         _eventHubName         = Ensure.NotEmptyString(eventHubName);
         _captureContainerName = Ensure.NotEmptyString(captureContainerName);
         _useRealtimeReading   = useRealtimeReading;
         _serializer           = serializer     ?? DefaultEventSerializer.Instance;
         _metaSerializer       = metaSerializer ?? DefaultMetadataSerializer.Instance;
-        _consumer             = new AzureEventHubsConsumer(consumerClient, serializer, metaSerializer, logger);
+        _loggerFactory        = loggerFactory;
+        _consumer             = new AzureEventHubsConsumer(consumerClient, serializer, metaSerializer, loggerFactory?.CreateLogger<AzureEventHubsConsumer>());
     }
 
     /// <summary>
@@ -71,7 +71,6 @@ public class AzureEventHubsEventStore : IEventStore, IDisposable {
     /// <param name="eventHubConnectionString">Event Hub connection string</param>
     /// <param name="eventHubName">Event Hub name</param>
     /// <param name="blobStorageConnectionString">Blob storage connection string</param>
-    /// <param name="tableStorageConnectionString">Table storage connection string</param>
     /// <param name="captureContainerName">Blob container name where captured events are stored</param>
     /// <param name="consumerGroup">Consumer group for reading events (default: $Default)</param>
     /// <param name="useRealtimeReading">Whether to use real-time reading from Event Hubs for recent events</param>
@@ -82,7 +81,6 @@ public class AzureEventHubsEventStore : IEventStore, IDisposable {
             string                              eventHubConnectionString,
             string                              eventHubName,
             string                              blobStorageConnectionString,
-            string                              tableStorageConnectionString,
             string                              captureContainerName,
             string                              consumerGroup = EventHubConsumerClient.DefaultConsumerGroupName,
             bool                                useRealtimeReading = true,
@@ -93,7 +91,6 @@ public class AzureEventHubsEventStore : IEventStore, IDisposable {
             new EventHubProducerClient(Ensure.NotEmptyString(eventHubConnectionString), Ensure.NotEmptyString(eventHubName)),
             new EventHubConsumerClient(consumerGroup, Ensure.NotEmptyString(eventHubConnectionString), Ensure.NotEmptyString(eventHubName)),
             new BlobServiceClient(Ensure.NotEmptyString(blobStorageConnectionString)),
-            new TableServiceClient(Ensure.NotEmptyString(tableStorageConnectionString)),
             eventHubName,
             captureContainerName,
             useRealtimeReading,
@@ -105,20 +102,19 @@ public class AzureEventHubsEventStore : IEventStore, IDisposable {
     /// <inheritdoc/>
     public async Task<bool> StreamExists(StreamName stream, CancellationToken cancellationToken = default) {
         try {
-            // Check if stream exists in Table Storage metadata
-            const string tableName = "StreamMetadata";
-            const string partitionKey = "streams";
-            var rowKey = stream.ToString();
+            // Check if any captured events exist for this stream by looking for blobs with the stream name prefix
+            var containerClient = _blobServiceClient.GetBlobContainerClient(_captureContainerName);
+            var blobPages = containerClient.GetBlobsAsync(prefix: GetBlobPrefix(stream), cancellationToken: cancellationToken)
+                .AsPages(pageSizeHint: 1);
 
-            var tableClient = _tableServiceClient.GetTableClient(tableName);
-
-            try {
-                var response = await tableClient.GetEntityAsync<TableEntity>(partitionKey, rowKey, cancellationToken: cancellationToken).NoContext();
-                var version = response.Value.GetInt32("Version");
-                return version >= 0; // Version >= 0 means stream exists
-            } catch (RequestFailedException ex) when (ex.Status == 404) {
-                return false; // Stream doesn't exist
+            await foreach (var page in blobPages) {
+                if (page.Values.Any()) {
+                    return true;
+                }
+                break; // Only check the first page
             }
+
+            return false;
         } catch (Exception ex) {
             _logger?.LogWarning(ex, "Failed to check if stream {Stream} exists", stream);
             return false;
@@ -137,27 +133,22 @@ public class AzureEventHubsEventStore : IEventStore, IDisposable {
         }
 
         try {
-            // CRITICAL: Validate and update stream version with optimistic concurrency
-            var (newVersion, globalPosition) = await ValidateAndUpdateVersion(stream, expectedVersion, events.Count, cancellationToken).NoContext();
-
-            // Create batch with partition key for stream isolation
-            var batchOptions = new CreateBatchOptions { PartitionKey = stream.ToString() };
-            var eventDataBatch = await _producerClient.CreateBatchAsync(batchOptions, cancellationToken).NoContext();
-            var streamPosition = newVersion - events.Count; // Starting position for this batch
+            var eventDataBatch = await _producerClient.CreateBatchAsync(cancellationToken).NoContext();
+            var eventPosition = 0L;
 
             foreach (var streamEvent in events) {
-                var eventData = ToEventData(streamEvent, stream, streamPosition);
-
+                var eventData = ToEventData(streamEvent, stream);
+                
                 if (!eventDataBatch.TryAdd(eventData)) {
                     // If the batch is full, send it and create a new batch
                     await _producerClient.SendAsync(eventDataBatch, cancellationToken).NoContext();
-                    eventDataBatch = await _producerClient.CreateBatchAsync(batchOptions, cancellationToken).NoContext();
-
+                    eventDataBatch = await _producerClient.CreateBatchAsync(cancellationToken).NoContext();
+                    
                     if (!eventDataBatch.TryAdd(eventData)) {
                         throw new InvalidOperationException("Event is too large to fit in a batch");
                     }
                 }
-                streamPosition++;
+                eventPosition++;
             }
 
             // Send the final batch
@@ -165,7 +156,11 @@ public class AzureEventHubsEventStore : IEventStore, IDisposable {
                 await _producerClient.SendAsync(eventDataBatch, cancellationToken).NoContext();
             }
 
-            return new AppendEventsResult(globalPosition, newVersion);
+            // Event Hubs doesn't provide a global position like EventStore, so we use a timestamp-based approach
+            var globalPosition = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var nextExpectedVersion = expectedVersion.Value + events.Count;
+
+            return new AppendEventsResult(globalPosition, nextExpectedVersion);
         } catch (Exception ex) {
             _logger?.LogError(ex, "Failed to append {Count} events to stream {Stream}", events.Count, stream);
             throw new AppendToStreamException(stream, ex);
@@ -195,7 +190,7 @@ public class AzureEventHubsEventStore : IEventStore, IDisposable {
                     ).NoContext();
 
                     events.AddRange(realtimeEvents.Skip((int)start.Value).Take(count));
-
+                    
                     if (events.Count >= count) {
                         return events.ToArray();
                     }
@@ -220,11 +215,11 @@ public class AzureEventHubsEventStore : IEventStore, IDisposable {
             throw;
         } catch (Exception ex) {
             _logger?.LogError(ex, "Failed to read {Count} events from stream {Stream} starting at {Start}", count, stream, start);
-
+            
             if (failIfNotFound) {
                 throw new ReadFromStreamException(stream, ex);
             }
-
+            
             return [];
         }
     }
@@ -240,11 +235,11 @@ public class AzureEventHubsEventStore : IEventStore, IDisposable {
         try {
             var allEvents = new List<StreamEvent>();
             var containerClient = _blobServiceClient.GetBlobContainerClient(_captureContainerName);
-
+            
             // Get captured event blobs for this stream
             var blobPrefix = GetBlobPrefix(stream);
             var blobs = containerClient.GetBlobsAsync(prefix: blobPrefix, cancellationToken: cancellationToken);
-
+            
             // Collect all events first
             await foreach (var blobItem in blobs) {
                 var blobClient = containerClient.GetBlobClient(blobItem.Name);
@@ -270,11 +265,11 @@ public class AzureEventHubsEventStore : IEventStore, IDisposable {
             throw;
         } catch (Exception ex) {
             _logger?.LogError(ex, "Failed to read {Count} events backwards from stream {Stream} starting at {Start}", count, stream, start);
-
+            
             if (failIfNotFound) {
                 throw new ReadFromStreamException(stream, ex);
             }
-
+            
             return [];
         }
     }
@@ -302,80 +297,8 @@ public class AzureEventHubsEventStore : IEventStore, IDisposable {
         throw new NotSupportedException("Stream deletion is not supported by Azure Event Hubs");
     }
 
-    /// <summary>
-    /// Validates expected version and atomically updates stream version using Table Storage
-    /// </summary>
-    async Task<(long newVersion, ulong globalPosition)> ValidateAndUpdateVersion(
-            StreamName stream,
-            ExpectedStreamVersion expectedVersion,
-            int eventCount,
-            CancellationToken cancellationToken
-        ) {
-        const string tableName = "StreamMetadata";
-        const string partitionKey = "streams";
-        var rowKey = stream.ToString();
-
-        try {
-            // Get current stream metadata
-            var tableClient = _tableServiceClient.GetTableClient(tableName);
-            await tableClient.CreateIfNotExistsAsync(cancellationToken).NoContext();
-
-            TableEntity? currentEntity = null;
-            try {
-                var response = await tableClient.GetEntityAsync<TableEntity>(partitionKey, rowKey, cancellationToken: cancellationToken).NoContext();
-                currentEntity = response.Value;
-            } catch (RequestFailedException ex) when (ex.Status == 404) {
-                // Stream doesn't exist yet
-            }
-
-            var currentVersion = currentEntity?.GetInt32("Version") ?? -1; // -1 means NoStream
-            var currentGlobalPosition = currentEntity?.GetInt64("GlobalPosition") ?? 0L;
-
-            // Validate expected version
-            if (expectedVersion == ExpectedStreamVersion.NoStream) {
-                if (currentVersion != -1) {
-                    throw new AppendToStreamException(stream, new InvalidOperationException($"Stream {stream} already exists"));
-                }
-            } else if (expectedVersion == ExpectedStreamVersion.Any) {
-                // Any version is acceptable
-            } else {
-                if (currentVersion != expectedVersion.Value) {
-                    throw new AppendToStreamException(stream, new InvalidOperationException($"Wrong expected version. Expected: {expectedVersion.Value}, Current: {currentVersion}"));
-                }
-            }
-
-            // Calculate new version and global position
-            var newVersion = currentVersion + eventCount;
-            var newGlobalPosition = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-
-            // Update or create stream metadata atomically
-            var newEntity = new TableEntity(partitionKey, rowKey) {
-                ["Version"] = newVersion,
-                ["GlobalPosition"] = newGlobalPosition,
-                ["LastUpdated"] = DateTimeOffset.UtcNow
-            };
-
-            if (currentEntity != null) {
-                // Update existing stream with ETag for optimistic concurrency
-                newEntity.ETag = currentEntity.ETag;
-                await tableClient.UpdateEntityAsync(newEntity, newEntity.ETag, cancellationToken: cancellationToken).NoContext();
-            } else {
-                // Create new stream
-                await tableClient.AddEntityAsync(newEntity, cancellationToken: cancellationToken).NoContext();
-            }
-
-            return (newVersion, newGlobalPosition);
-        } catch (RequestFailedException ex) when (ex.Status == 412) {
-            // ETag mismatch - concurrent update occurred
-            throw new AppendToStreamException(stream, new InvalidOperationException($"Concurrent update detected for stream {stream}"));
-        } catch (Exception ex) {
-            _logger?.LogError(ex, "Failed to validate and update version for stream {Stream}", stream);
-            throw new AppendToStreamException(stream, ex);
-        }
-    }
-
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    EventData ToEventData(NewStreamEvent streamEvent, StreamName stream, long streamPosition) {
+    EventData ToEventData(NewStreamEvent streamEvent, StreamName stream) {
         var (eventType, contentType, payload) = _serializer.SerializeEvent(streamEvent.Payload!);
         var metadata = _metaSerializer.Serialize(streamEvent.Metadata);
 
@@ -385,11 +308,10 @@ public class AzureEventHubsEventStore : IEventStore, IDisposable {
             PartitionKey = stream.ToString() // Use stream name as partition key for stream isolation
         };
 
-        // Add custom properties for event type, metadata, and stream position
+        // Add custom properties for event type and metadata
         eventData.Properties["EventType"] = eventType;
         eventData.Properties["StreamName"] = stream.ToString();
-        eventData.Properties["StreamPosition"] = streamPosition.ToString();
-
+        
         if (metadata.Length > 0) {
             eventData.Properties["Metadata"] = Convert.ToBase64String(metadata);
         }
@@ -405,11 +327,11 @@ public class AzureEventHubsEventStore : IEventStore, IDisposable {
         ) {
         var events = new List<StreamEvent>();
         var containerClient = _blobServiceClient.GetBlobContainerClient(_captureContainerName);
-
+        
         // Get captured event blobs for this stream
         var blobPrefix = GetBlobPrefix(stream);
         var blobs = containerClient.GetBlobsAsync(prefix: blobPrefix, cancellationToken: cancellationToken);
-
+        
         var processedEvents = 0;
         var skippedEvents = 0;
 
@@ -444,18 +366,18 @@ public class AzureEventHubsEventStore : IEventStore, IDisposable {
 
     async Task<List<StreamEvent>> ReadEventsFromBlob(BlobClient blobClient, StreamName stream, CancellationToken cancellationToken) {
         var events = new List<StreamEvent>();
-
+        
         try {
             var response = await blobClient.DownloadContentAsync(cancellationToken).NoContext();
-            var avroData = response.Value.Content.ToArray();
-
+            var content = response.Value.Content.ToString();
+            
             // Parse AVRO format used by Event Hubs Capture
-            using var streamReader = new MemoryStream(avroData);
-            using var dataFileReader = DataFileReader<GenericRecord>.OpenReader(streamReader);
-
-            foreach (var record in dataFileReader.NextEntries) {
+            // This is a simplified implementation - in production, you'd use proper AVRO parsing
+            var lines = content.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            
+            foreach (var line in lines) {
                 try {
-                    var eventData = ParseCapturedEvent(record, stream);
+                    var eventData = ParseCapturedEvent(line, stream);
                     if (eventData != null) {
                         events.Add(eventData.Value);
                     }
@@ -470,52 +392,46 @@ public class AzureEventHubsEventStore : IEventStore, IDisposable {
         return events;
     }
 
-    StreamEvent? ParseCapturedEvent(GenericRecord record, StreamName targetStream) {
+    StreamEvent? ParseCapturedEvent(string eventLine, StreamName targetStream) {
         try {
-            // Extract properties from the AVRO record
-            if (!record.TryGetValue("Properties", out var propertiesObj) || propertiesObj is not GenericRecord properties) {
-                return null;
-            }
+            // This is a simplified parser for demonstration
+            // In production, you'd use proper AVRO deserialization
+            var eventDoc = JsonDocument.Parse(eventLine);
+            var root = eventDoc.RootElement;
 
-            if (!properties.TryGetValue("StreamName", out var streamNameObj) || streamNameObj is not string streamName) {
-                return null;
-            }
-
+            // Extract properties from the captured event
+            if (!root.TryGetProperty("Properties", out var properties)) return null;
+            
+            if (!properties.TryGetProperty("StreamName", out var streamNameProp)) return null;
+            var streamName = streamNameProp.GetString();
+            
             if (streamName != targetStream.ToString()) return null;
 
-            if (!properties.TryGetValue("EventType", out var eventTypeObj) || eventTypeObj is not string eventType) {
-                return null;
-            }
+            if (!properties.TryGetProperty("EventType", out var eventTypeProp)) return null;
+            var eventType = eventTypeProp.GetString()!;
 
-            if (!record.TryGetValue("Body", out var bodyObj) || bodyObj is not byte[] bodyBytes) {
-                return null;
-            }
+            if (!root.TryGetProperty("Body", out var bodyProp)) return null;
+            var bodyBytes = Convert.FromBase64String(bodyProp.GetString()!);
 
-            if (!record.TryGetValue("ContentType", out var contentTypeObj) || contentTypeObj is not string contentType) {
-                return null;
-            }
+            if (!root.TryGetProperty("ContentType", out var contentTypeProp)) return null;
+            var contentType = contentTypeProp.GetString()!;
 
             // Deserialize the event
             var deserialized = _serializer.DeserializeEvent(bodyBytes, eventType, contentType);
-
+            
             if (deserialized is not SuccessfullyDeserialized success) return null;
 
             // Extract metadata
             Metadata? metadata = null;
-            if (properties.TryGetValue("Metadata", out var metadataObj) && metadataObj is byte[] metadataBytes) {
+            if (properties.TryGetProperty("Metadata", out var metadataProp)) {
+                var metadataBytes = Convert.FromBase64String(metadataProp.GetString()!);
                 metadata = _metaSerializer.Deserialize(metadataBytes);
-            }
-
-            // Extract stream position
-            long streamPosition = 0;
-            if (properties.TryGetValue("StreamPosition", out var positionObj) && positionObj is string positionStr) {
-                long.TryParse(positionStr, out streamPosition);
             }
 
             // Extract event ID
             var eventId = Guid.NewGuid(); // Fallback
-            if (record.TryGetValue("MessageId", out var messageIdObj) && messageIdObj is string messageId) {
-                Guid.TryParse(messageId, out eventId);
+            if (root.TryGetProperty("MessageId", out var messageIdProp)) {
+                Guid.TryParse(messageIdProp.GetString(), out eventId);
             }
 
             return new StreamEvent(
@@ -523,17 +439,17 @@ public class AzureEventHubsEventStore : IEventStore, IDisposable {
                 success.Payload,
                 metadata ?? new Metadata(),
                 contentType,
-                streamPosition
+                0 // Position will be set by the caller
             );
         } catch (Exception ex) {
-            _logger?.LogWarning(ex, "Failed to parse captured event from AVRO record");
+            _logger?.LogWarning(ex, "Failed to parse captured event: {EventLine}", eventLine);
             return null;
         }
     }
 
     public void Dispose() {
         if (_disposed) return;
-
+        
         _consumer.Dispose();
         _producerClient.Dispose();
         _disposed = true;

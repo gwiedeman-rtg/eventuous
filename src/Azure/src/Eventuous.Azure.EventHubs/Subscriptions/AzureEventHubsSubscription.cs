@@ -146,11 +146,10 @@ public class AzureEventHubsSubscription : EventSubscription<AzureEventHubsSubscr
         return null;
     }
 
-    public override async ValueTask DisposeAsync() {
+    protected override async ValueTask Finalize(CancellationToken cancellationToken) {
         if (_processorClient != null) {
-            await _processorClient.StopProcessingAsync().NoContext();
+            await _processorClient.StopProcessingAsync(cancellationToken).NoContext();
             await _processorClient.DisposeAsync().NoContext();
         }
-        await base.DisposeAsync();
     }
 }

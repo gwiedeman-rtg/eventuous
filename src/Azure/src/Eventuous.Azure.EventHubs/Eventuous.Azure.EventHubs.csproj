@@ -31,7 +31,6 @@
     <Using Include="Azure.Messaging.EventHubs.Processor" />
     <Using Include="Azure.Storage.Blobs" />
     <Using Include="Azure.Data.Tables" />
-    <Using Include="Apache.Avro" />
     <Using Include="Microsoft.Extensions.Logging" />
   </ItemGroup>
 

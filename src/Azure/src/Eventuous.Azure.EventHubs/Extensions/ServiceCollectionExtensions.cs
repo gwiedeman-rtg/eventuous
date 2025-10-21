@@ -7,6 +7,7 @@ using Eventuous.Producers;
 using Eventuous.Subscriptions;
 using Eventuous.Subscriptions.Checkpoints;
 using Eventuous.Subscriptions.Filters;
+using Eventuous.Azure.EventHubs.Subscriptions;
 
 namespace Eventuous.Azure.EventHubs.Extensions;
 
