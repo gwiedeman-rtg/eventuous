@@ -13,9 +13,11 @@
   <Folder Name="/Brokers/" />
   <Folder Name="/Brokers/Azure/" />
   <Folder Name="/Brokers/Azure/src/">
+    <Project Path="src/Azure/src/Eventuous.Azure.EventHubs/Eventuous.Azure.EventHubs.csproj" />
     <Project Path="src/Azure/src/Eventuous.Azure.ServiceBus/Eventuous.Azure.ServiceBus.csproj" />
   </Folder>
   <Folder Name="/Brokers/Azure/test/">
+    <Project Path="src/Azure/test/Eventuous.Tests.Azure.EventHubs/Eventuous.Tests.Azure.EventHubs.csproj" />
     <Project Path="src/Azure/test/Eventuous.Tests.Azure.ServiceBus/Eventuous.Tests.Azure.ServiceBus.csproj" />
   </Folder>
   <Folder Name="/Brokers/GooglePubSub/" />
