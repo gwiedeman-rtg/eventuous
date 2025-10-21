@@ -4,6 +4,9 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Eventuous.Producers;
+using Eventuous.Subscriptions;
+using Eventuous.Subscriptions.Checkpoints;
+using Eventuous.Subscriptions.Filters;
 
 namespace Eventuous.Azure.EventHubs.Extensions;
 
@@ -22,7 +25,7 @@ public static class ServiceCollectionExtensions {
             Action<AzureEventHubsEventStoreOptions>           configureOptions
         ) {
         services.Configure(configureOptions);
-        
+
         services.AddSingleton<IEventStore>(serviceProvider => {
             var options = serviceProvider.GetRequiredService<IOptions<AzureEventHubsEventStoreOptions>>().Value;
             options.Validate();
@@ -35,6 +38,7 @@ public static class ServiceCollectionExtensions {
                 options.EventHubConnectionString,
                 options.EventHubName,
                 options.BlobStorageConnectionString,
+                options.TableStorageConnectionString,
                 options.CaptureContainerName,
                 options.ConsumerGroup,
                 options.UseRealtimeReading,
@@ -147,6 +151,44 @@ public static class ServiceCollectionExtensions {
         services.AddSingleton<IProducer>(serviceProvider =>
             serviceProvider.GetRequiredService<IProducer<AzureEventHubsProduceOptions>>()
         );
+
+        return services;
+    }
+
+    /// <summary>
+    /// Add Azure Event Hubs Subscription to the service collection
+    /// </summary>
+    /// <param name="services">Service collection</param>
+    /// <param name="subscriptionId">Subscription ID</param>
+    /// <param name="configureOptions">Configuration action for options</param>
+    /// <returns>Service collection for chaining</returns>
+    public static IServiceCollection AddAzureEventHubsSubscription(
+            this IServiceCollection services,
+            string subscriptionId,
+            Action<AzureEventHubsSubscriptionOptions> configureOptions
+        ) {
+        services.Configure(configureOptions);
+
+        services.AddSingleton<IMessageSubscription>(serviceProvider => {
+            var options = serviceProvider.GetRequiredService<IOptions<AzureEventHubsSubscriptionOptions>>().Value;
+            options.SubscriptionId = subscriptionId;
+            options.Validate();
+
+            var checkpointStore = serviceProvider.GetRequiredService<ICheckpointStore>();
+            var consumePipe = serviceProvider.GetRequiredService<ConsumePipe>();
+            var loggerFactory = serviceProvider.GetService<ILoggerFactory>();
+            var eventSerializer = serviceProvider.GetService<IEventSerializer>();
+            var metaSerializer = serviceProvider.GetService<IMetadataSerializer>();
+
+            return new AzureEventHubsSubscription(
+                options,
+                checkpointStore,
+                consumePipe,
+                loggerFactory,
+                eventSerializer,
+                metaSerializer
+            );
+        });
 
         return services;
     }

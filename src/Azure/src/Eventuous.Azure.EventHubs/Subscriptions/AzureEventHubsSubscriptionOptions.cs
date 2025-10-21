@@ -1,12 +1,16 @@
 // Copyright (C) Eventuous HQ OÜ. All rights reserved
 // Licensed under the Apache License, Version 2.0.
 
-namespace Eventuous.Azure.EventHubs;
+namespace Eventuous.Azure.EventHubs.Subscriptions;
 
 /// <summary>
-/// Configuration options for Azure Event Hubs Event Store
+/// Options for Azure Event Hubs subscription
 /// </summary>
-public class AzureEventHubsEventStoreOptions {
+public class AzureEventHubsSubscriptionOptions {
+    /// <summary>
+    /// Subscription ID
+    /// </summary>
+    public string SubscriptionId { get; set; } = string.Empty;
     /// <summary>
     /// Event Hub connection string
     /// </summary>
@@ -18,29 +22,34 @@ public class AzureEventHubsEventStoreOptions {
     public string EventHubName { get; set; } = string.Empty;
 
     /// <summary>
-    /// Blob storage connection string for reading captured events
-    /// </summary>
-    public string BlobStorageConnectionString { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Table storage connection string for stream metadata and versioning
-    /// </summary>
-    public string TableStorageConnectionString { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Blob container name where captured events are stored
-    /// </summary>
-    public string CaptureContainerName { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Consumer group for reading events (default: $Default)
+    /// Consumer group name
     /// </summary>
     public string ConsumerGroup { get; set; } = EventHubConsumerClient.DefaultConsumerGroupName;
 
     /// <summary>
-    /// Whether to use real-time reading from Event Hubs for recent events
+    /// Blob storage connection string for checkpoint storage
     /// </summary>
-    public bool UseRealtimeReading { get; set; } = true;
+    public string BlobStorageConnectionString { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Blob container name for checkpoint storage
+    /// </summary>
+    public string CheckpointContainerName { get; set; } = "eventhubs-checkpoints";
+
+    /// <summary>
+    /// Maximum number of events to process in a batch
+    /// </summary>
+    public int MaxBatchSize { get; set; } = 100;
+
+    /// <summary>
+    /// Maximum wait time for events
+    /// </summary>
+    public TimeSpan MaxWaitTime { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Whether to start from the beginning of the stream
+    /// </summary>
+    public bool StartFromBeginning { get; set; } = false;
 
     /// <summary>
     /// Validate the configuration
@@ -54,11 +63,5 @@ public class AzureEventHubsEventStoreOptions {
 
         if (string.IsNullOrWhiteSpace(BlobStorageConnectionString))
             throw new InvalidOperationException("BlobStorageConnectionString is required");
-
-        if (string.IsNullOrWhiteSpace(TableStorageConnectionString))
-            throw new InvalidOperationException("TableStorageConnectionString is required");
-
-        if (string.IsNullOrWhiteSpace(CaptureContainerName))
-            throw new InvalidOperationException("CaptureContainerName is required");
     }
 }

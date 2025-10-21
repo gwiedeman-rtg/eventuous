@@ -139,41 +139,23 @@
   <Folder Name="/Samples/" />
   <Folder Name="/Samples/Esdb/">
     <Project Path="samples/esdb/Bookings.Domain/Bookings.Domain.csproj">
-      <BuildType Solution="Debug CI|Any CPU" Project="?" />
-      <Platform Solution="Debug CI|Any CPU" Project="?" />
-      <Build Solution="Debug CI|Any CPU" Project="false" />
       <Build Solution="Release|Any CPU" Project="false" />
     </Project>
     <Project Path="samples/esdb/Bookings.Payments/Bookings.Payments.csproj">
-      <BuildType Solution="Debug CI|Any CPU" Project="?" />
-      <Platform Solution="Debug CI|Any CPU" Project="?" />
-      <Build Solution="Debug CI|Any CPU" Project="false" />
       <Build Solution="Release|Any CPU" Project="false" />
     </Project>
     <Project Path="samples/esdb/Bookings/Bookings.csproj">
-      <BuildType Solution="Debug CI|Any CPU" Project="?" />
-      <Platform Solution="Debug CI|Any CPU" Project="?" />
-      <Build Solution="Debug CI|Any CPU" Project="false" />
       <Build Solution="Release|Any CPU" Project="false" />
     </Project>
   </Folder>
   <Folder Name="/Samples/Postgres/">
     <Project Path="samples/postgres/Bookings.Domain/Bookings.Domain.csproj">
-      <BuildType Solution="Debug CI|Any CPU" Project="?" />
-      <Platform Solution="Debug CI|Any CPU" Project="?" />
-      <Build Solution="Debug CI|Any CPU" Project="false" />
       <Build Solution="Release|Any CPU" Project="false" />
     </Project>
     <Project Path="samples/postgres/Bookings.Payments/Bookings.Payments.csproj">
-      <BuildType Solution="Debug CI|Any CPU" Project="?" />
-      <Platform Solution="Debug CI|Any CPU" Project="?" />
-      <Build Solution="Debug CI|Any CPU" Project="false" />
       <Build Solution="Release|Any CPU" Project="false" />
     </Project>
     <Project Path="samples/postgres/Bookings/Bookings.csproj">
-      <BuildType Solution="Debug CI|Any CPU" Project="?" />
-      <Platform Solution="Debug CI|Any CPU" Project="?" />
-      <Build Solution="Debug CI|Any CPU" Project="false" />
       <Build Solution="Release|Any CPU" Project="false" />
     </Project>
   </Folder>
