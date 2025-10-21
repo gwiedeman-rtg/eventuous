@@ -15,6 +15,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Eventuous.Azure.EventHubs\Eventuous.Azure.EventHubs.csproj" />
+    <ProjectReference Include="..\..\..\Core\test\Eventuous.Tests.Persistence.Base\Eventuous.Tests.Persistence.Base.csproj" />
+    <ProjectReference Include="..\..\..\Core\test\Eventuous.Tests.Subscriptions.Base\Eventuous.Tests.Subscriptions.Base.csproj" />
   </ItemGroup>
 
 </Project>
