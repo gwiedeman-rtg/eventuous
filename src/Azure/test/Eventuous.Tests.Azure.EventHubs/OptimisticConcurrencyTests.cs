@@ -17,11 +17,11 @@ namespace Eventuous.Tests.Azure.EventHubs;
 /// Tests for optimistic concurrency control in Azure Event Hubs Event Store.
 /// These tests ensure that the concurrency fixes are working and would fail if removed.
 /// </summary>
-public class OptimisticConcurrencyTests : IClassFixture<IntegrationFixture> {
-    readonly IntegrationFixture _fixture;
+public class OptimisticConcurrencyTests : IClassFixture<AzureEventHubsFixture> {
+    readonly AzureEventHubsFixture _fixture;
     readonly ITestOutputHelper _output;
 
-    public OptimisticConcurrencyTests(IntegrationFixture fixture, ITestOutputHelper output) {
+    public OptimisticConcurrencyTests(AzureEventHubsFixture fixture, ITestOutputHelper output) {
         _fixture = fixture;
         _output = output;
     }
@@ -249,5 +249,3 @@ public class OptimisticConcurrencyTests : IClassFixture<IntegrationFixture> {
         }
     }
 }
-
-public record TestEvent(string Value);

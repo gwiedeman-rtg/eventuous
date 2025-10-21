@@ -15,11 +15,11 @@ namespace Eventuous.Tests.Azure.EventHubs;
 /// Integration tests that verify critical fixes are working.
 /// These tests would FAIL if the fixes were removed, ensuring they stay in place.
 /// </summary>
-public class CriticalFixesIntegrationTests : IClassFixture<IntegrationFixture> {
-    readonly IntegrationFixture _fixture;
+public class CriticalFixesIntegrationTests : IClassFixture<AzureEventHubsFixture> {
+    readonly AzureEventHubsFixture _fixture;
     readonly ITestOutputHelper _output;
 
-    public CriticalFixesIntegrationTests(IntegrationFixture fixture, ITestOutputHelper output) {
+    public CriticalFixesIntegrationTests(AzureEventHubsFixture fixture, ITestOutputHelper output) {
         _fixture = fixture;
         _output = output;
     }
@@ -290,5 +290,3 @@ public class CriticalFixesIntegrationTests : IClassFixture<IntegrationFixture> {
         }
     }
 }
-
-public record TestEvent(string Value);

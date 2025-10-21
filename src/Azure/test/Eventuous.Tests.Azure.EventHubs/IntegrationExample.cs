@@ -5,6 +5,7 @@ using Eventuous.Azure.EventHubs;
 using Eventuous.Azure.EventHubs.Extensions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Xunit;
 
 namespace Eventuous.Tests.Azure.EventHubs;
 
@@ -17,7 +18,7 @@ public class IntegrationExample {
     public async Task CanAppendAndReadEvents() {
         // This test would require actual Azure resources
         // It's marked as Skip to avoid failing in CI/CD
-        
+
         var connectionString = "Endpoint=sb://test.servicebus.windows.net/;SharedAccessKeyName=test;SharedAccessKey=test";
         var eventHubName = "test-hub";
         var blobConnectionString = "DefaultEndpointsProtocol=https;AccountName=test;AccountKey=test;EndpointSuffix=core.windows.net";
@@ -70,9 +71,9 @@ public class IntegrationExample {
     [Fact]
     public void CanConfigureWithDependencyInjection() {
         var services = new ServiceCollection();
-        
+
         services.AddLogging(builder => builder.AddConsole());
-        
+
         services.AddAzureEventHubsEventStore(options => {
             options.EventHubConnectionString = "test-connection";
             options.EventHubName = "test-hub";

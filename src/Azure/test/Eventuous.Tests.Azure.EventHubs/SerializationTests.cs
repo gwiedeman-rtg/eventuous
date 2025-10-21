@@ -3,6 +3,7 @@
 
 using Eventuous.Azure.EventHubs;
 using System.Text.Json;
+using Xunit;
 
 namespace Eventuous.Tests.Azure.EventHubs;
 
@@ -27,13 +28,13 @@ public class SerializationTests {
         // Assert
         Assert.Equal("TestEvent", serializationResult.EventType);
         Assert.Equal("application/json", serializationResult.ContentType);
-        
+
         Assert.IsType<DeserializationResult.SuccessfullyDeserialized>(deserializationResult);
         var successResult = (DeserializationResult.SuccessfullyDeserialized)deserializationResult;
-        
+
         Assert.IsType<TestEvent>(successResult.Payload);
         var deserializedEvent = (TestEvent)successResult.Payload;
-        
+
         Assert.Equal(originalEvent.Id, deserializedEvent.Id);
         Assert.Equal(originalEvent.Name, deserializedEvent.Name);
         Assert.Equal(originalEvent.CreatedAt, deserializedEvent.CreatedAt);
@@ -57,10 +58,10 @@ public class SerializationTests {
         // Assert
         Assert.NotNull(deserializedMetadata);
         Assert.Equal(originalMetadata.Count, deserializedMetadata.Count);
-        
+
         foreach (var kvp in originalMetadata) {
             Assert.True(deserializedMetadata.ContainsKey(kvp.Key));
-            
+
             // JSON deserialization might change types (e.g., int to JsonElement)
             // So we compare string representations
             Assert.Equal(kvp.Value?.ToString(), deserializedMetadata[kvp.Key]?.ToString());
@@ -118,7 +119,7 @@ public class SerializationTests {
         // Verify we can deserialize back
         var deserializedEvent = serializer.DeserializeEvent(payload, eventType, contentType);
         Assert.IsType<DeserializationResult.SuccessfullyDeserialized>(deserializedEvent);
-        
+
         var metadataFromBase64 = Convert.FromBase64String((string)eventData.Properties["Metadata"]);
         var deserializedMetadata = metaSerializer.Deserialize(metadataFromBase64);
         Assert.NotNull(deserializedMetadata);
@@ -159,10 +160,10 @@ public class SerializationTests {
         // Assert
         Assert.IsType<DeserializationResult.SuccessfullyDeserialized>(deserializationResult);
         var successResult = (DeserializationResult.SuccessfullyDeserialized)deserializationResult;
-        
+
         Assert.IsType<ComplexTestEvent>(successResult.Payload);
         var deserializedEvent = (ComplexTestEvent)successResult.Payload;
-        
+
         Assert.Equal(complexEvent.Id, deserializedEvent.Id);
         Assert.Equal(complexEvent.Name, deserializedEvent.Name);
         Assert.Equal(complexEvent.Properties.Count, deserializedEvent.Properties.Count);

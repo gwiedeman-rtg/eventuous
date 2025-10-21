@@ -4,6 +4,7 @@
 using Eventuous.Azure.EventHubs;
 using Eventuous.Producers;
 using System.Diagnostics;
+using Xunit;
 
 namespace Eventuous.Tests.Azure.EventHubs;
 
@@ -23,7 +24,7 @@ public class PerformanceTests {
         // Arrange
         var streamName = new StreamName($"perf-batch-{Guid.NewGuid()}");
         const int eventCount = 100;
-        
+
         var events = Enumerable.Range(1, eventCount)
             .Select(i => new NewStreamEvent(
                 Guid.NewGuid(),
@@ -46,7 +47,7 @@ public class PerformanceTests {
         // Assert
         Assert.True(result.GlobalPosition > 0);
         Assert.Equal(eventCount - 1, result.NextExpectedVersion);
-        
+
         _fixture.Logger.LogInformation(
             "Appended {EventCount} events in {ElapsedMs}ms ({EventsPerSecond:F2} events/sec)",
             eventCount,
@@ -55,7 +56,7 @@ public class PerformanceTests {
         );
 
         // Performance assertion - should be able to append 100 events in reasonable time
-        Assert.True(stopwatch.ElapsedMilliseconds < 30000, 
+        Assert.True(stopwatch.ElapsedMilliseconds < 30000,
             $"Appending {eventCount} events took {stopwatch.ElapsedMilliseconds}ms, which is too slow");
     }
 
@@ -65,7 +66,7 @@ public class PerformanceTests {
         var streamName = new StreamName($"perf-concurrent-{Guid.NewGuid()}");
         const int messageCount = 50;
         const int concurrency = 5;
-        
+
         var allMessages = Enumerable.Range(1, messageCount)
             .Select(i => new ProducedMessage(
                 new TestEvent($"concurrent-{i}", $"Concurrent Test Event {i}", DateTime.UtcNow),
@@ -83,7 +84,7 @@ public class PerformanceTests {
         var stopwatch = Stopwatch.StartNew();
 
         // Act
-        var tasks = batches.Select(batch => 
+        var tasks = batches.Select(batch =>
             _fixture.Producer.Produce(streamName, batch)
         );
 
@@ -99,7 +100,7 @@ public class PerformanceTests {
         );
 
         // Performance assertion - should be able to produce messages concurrently in reasonable time
-        Assert.True(stopwatch.ElapsedMilliseconds < 30000, 
+        Assert.True(stopwatch.ElapsedMilliseconds < 30000,
             $"Producing {messageCount} messages concurrently took {stopwatch.ElapsedMilliseconds}ms, which is too slow");
     }
 
@@ -107,7 +108,7 @@ public class PerformanceTests {
     public async Task CanHandleLargeEvents() {
         // Arrange
         var streamName = new StreamName($"perf-large-{Guid.NewGuid()}");
-        
+
         // Create a large event (but within Event Hubs limits)
         var largeData = new string('x', 50000); // 50KB string
         var largeEvent = new LargeTestEvent {
@@ -140,7 +141,7 @@ public class PerformanceTests {
         // Assert
         Assert.True(result.GlobalPosition > 0);
         Assert.Equal(0, result.NextExpectedVersion);
-        
+
         _fixture.Logger.LogInformation(
             "Appended large event ({Size} bytes) in {ElapsedMs}ms",
             largeData.Length,
@@ -148,7 +149,7 @@ public class PerformanceTests {
         );
 
         // Performance assertion - should be able to handle large events in reasonable time
-        Assert.True(stopwatch.ElapsedMilliseconds < 10000, 
+        Assert.True(stopwatch.ElapsedMilliseconds < 10000,
             $"Appending large event took {stopwatch.ElapsedMilliseconds}ms, which is too slow");
     }
 
@@ -157,7 +158,7 @@ public class PerformanceTests {
         // Arrange
         var streamName = new StreamName($"perf-batching-{Guid.NewGuid()}");
         const int messageCount = 200;
-        
+
         var messages = Enumerable.Range(1, messageCount)
             .Select(i => new ProducedMessage(
                 new TestEvent($"batch-{i}", $"Batching Test Event {i}", DateTime.UtcNow),
@@ -181,7 +182,7 @@ public class PerformanceTests {
         );
 
         // Performance assertion - batching should be efficient
-        Assert.True(stopwatch.ElapsedMilliseconds < 30000, 
+        Assert.True(stopwatch.ElapsedMilliseconds < 30000,
             $"Producing {messageCount} messages with batching took {stopwatch.ElapsedMilliseconds}ms, which is too slow");
     }
 
@@ -190,7 +191,7 @@ public class PerformanceTests {
         // Arrange
         var streamName = new StreamName($"perf-memory-{Guid.NewGuid()}");
         const int eventCount = 1000;
-        
+
         var initialMemory = GC.GetTotalMemory(true);
 
         // Act
@@ -228,14 +229,7 @@ public class PerformanceTests {
 
         // Memory assertion - should not leak excessive memory
         // Allow up to 50MB increase for processing 1000 events (this is quite generous)
-        Assert.True(memoryIncrease < 50 * 1024 * 1024, 
+        Assert.True(memoryIncrease < 50 * 1024 * 1024,
             $"Memory increased by {memoryIncrease / (1024.0 * 1024.0):F2} MB, which might indicate a memory leak");
     }
-}
-
-public record LargeTestEvent {
-    public string Id { get; init; } = string.Empty;
-    public string LargeData { get; init; } = string.Empty;
-    public DateTime CreatedAt { get; init; }
-    public Dictionary<string, string> Metadata { get; init; } = new();
 }

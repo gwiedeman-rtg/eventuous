@@ -15,11 +15,11 @@ namespace Eventuous.Tests.Azure.EventHubs;
 /// Regression tests that would FAIL if the critical fixes were removed.
 /// These tests serve as a safety net to prevent regression of the fixes.
 /// </summary>
-public class RegressionTests : IClassFixture<IntegrationFixture> {
-    readonly IntegrationFixture _fixture;
+public class RegressionTests : IClassFixture<AzureEventHubsFixture> {
+    readonly AzureEventHubsFixture _fixture;
     readonly ITestOutputHelper _output;
 
-    public RegressionTests(IntegrationFixture fixture, ITestOutputHelper output) {
+    public RegressionTests(AzureEventHubsFixture fixture, ITestOutputHelper output) {
         _fixture = fixture;
         _output = output;
     }
@@ -309,5 +309,3 @@ public class RegressionTests : IClassFixture<IntegrationFixture> {
         }
     }
 }
-
-public record TestEvent(string Value);

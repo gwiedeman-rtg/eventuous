@@ -15,11 +15,11 @@ namespace Eventuous.Tests.Azure.EventHubs;
 /// Tests for edge cases and failure scenarios in Azure Event Hubs Event Store.
 /// These tests ensure robust error handling and would fail if fixes are removed.
 /// </summary>
-public class EdgeCaseTests : IClassFixture<IntegrationFixture> {
-    readonly IntegrationFixture _fixture;
+public class EdgeCaseTests : IClassFixture<AzureEventHubsFixture> {
+    readonly AzureEventHubsFixture _fixture;
     readonly ITestOutputHelper _output;
 
-    public EdgeCaseTests(IntegrationFixture fixture, ITestOutputHelper output) {
+    public EdgeCaseTests(AzureEventHubsFixture fixture, ITestOutputHelper output) {
         _fixture = fixture;
         _output = output;
     }
@@ -352,6 +352,3 @@ public class EdgeCaseTests : IClassFixture<IntegrationFixture> {
         }
     }
 }
-
-public record TestEvent(string Value);
-public record LargeTestEvent(string LargeValue);

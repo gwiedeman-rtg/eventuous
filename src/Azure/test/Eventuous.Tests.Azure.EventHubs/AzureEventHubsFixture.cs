@@ -4,6 +4,7 @@
 using Eventuous.Azure.EventHubs;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Xunit;
 
 namespace Eventuous.Tests.Azure.EventHubs;
 
@@ -15,7 +16,7 @@ public class AzureEventHubsFixture : IDisposable {
     public AzureEventHubsEventStore EventStore { get; }
     public AzureEventHubsProducer Producer { get; }
     public ILogger<AzureEventHubsFixture> Logger { get; }
-    
+
     public string EventHubConnectionString { get; }
     public string EventHubName { get; }
     public string BlobStorageConnectionString { get; }
@@ -28,21 +29,21 @@ public class AzureEventHubsFixture : IDisposable {
             .AddEnvironmentVariables()
             .Build();
 
-        EventHubConnectionString = configuration["Azure:EventHubs:ConnectionString"] 
+        EventHubConnectionString = configuration["Azure:EventHubs:ConnectionString"]
             ?? throw new InvalidOperationException("Azure:EventHubs:ConnectionString is required for integration tests");
-        
-        EventHubName = configuration["Azure:EventHubs:EventHubName"] 
+
+        EventHubName = configuration["Azure:EventHubs:EventHubName"]
             ?? "eventuous-test-hub";
-        
-        BlobStorageConnectionString = configuration["Azure:BlobStorage:ConnectionString"] 
+
+        BlobStorageConnectionString = configuration["Azure:BlobStorage:ConnectionString"]
             ?? throw new InvalidOperationException("Azure:BlobStorage:ConnectionString is required for integration tests");
-        
-        CaptureContainerName = configuration["Azure:BlobStorage:CaptureContainer"] 
+
+        CaptureContainerName = configuration["Azure:BlobStorage:CaptureContainer"]
             ?? "eventhubs-capture";
 
-        var loggerFactory = LoggerFactory.Create(builder => 
+        var loggerFactory = LoggerFactory.Create(builder =>
             builder.AddConsole().SetMinimumLevel(LogLevel.Debug));
-        
+
         Logger = loggerFactory.CreateLogger<AzureEventHubsFixture>();
 
         EventStore = new AzureEventHubsEventStore(

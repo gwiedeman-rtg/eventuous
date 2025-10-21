@@ -15,11 +15,11 @@ namespace Eventuous.Tests.Azure.EventHubs;
 /// End-to-end tests that verify all critical fixes work together.
 /// These tests would FAIL if any of the critical fixes were removed.
 /// </summary>
-public class EndToEndTests : IClassFixture<IntegrationFixture> {
-    readonly IntegrationFixture _fixture;
+public class EndToEndTests : IClassFixture<AzureEventHubsFixture> {
+    readonly AzureEventHubsFixture _fixture;
     readonly ITestOutputHelper _output;
 
-    public EndToEndTests(IntegrationFixture fixture, ITestOutputHelper output) {
+    public EndToEndTests(AzureEventHubsFixture fixture, ITestOutputHelper output) {
         _fixture = fixture;
         _output = output;
     }
@@ -329,5 +329,3 @@ public class EndToEndTests : IClassFixture<IntegrationFixture> {
         Assert.Contains("Current: 4", exception.Message);
     }
 }
-
-public record TestEvent(string Value);

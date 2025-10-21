@@ -16,11 +16,11 @@ namespace Eventuous.Tests.Azure.EventHubs;
 /// Tests for Azure Event Hubs subscription functionality.
 /// These tests ensure that the subscription fixes are working and would fail if removed.
 /// </summary>
-public class SubscriptionTests : IClassFixture<IntegrationFixture> {
-    readonly IntegrationFixture _fixture;
+public class SubscriptionTests : IClassFixture<AzureEventHubsFixture> {
+    readonly AzureEventHubsFixture _fixture;
     readonly ITestOutputHelper _output;
 
-    public SubscriptionTests(IntegrationFixture fixture, ITestOutputHelper output) {
+    public SubscriptionTests(AzureEventHubsFixture fixture, ITestOutputHelper output) {
         _fixture = fixture;
         _output = output;
     }

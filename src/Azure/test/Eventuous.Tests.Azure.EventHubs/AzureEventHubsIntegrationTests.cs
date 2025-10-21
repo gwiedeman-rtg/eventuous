@@ -3,6 +3,7 @@
 
 using Eventuous.Azure.EventHubs;
 using Eventuous.Producers;
+using Xunit;
 
 namespace Eventuous.Tests.Azure.EventHubs;
 
@@ -46,7 +47,7 @@ public class AzureEventHubsIntegrationTests {
         // Assert
         Assert.True(result.GlobalPosition > 0);
         Assert.Equal(1, result.NextExpectedVersion);
-        
+
         _fixture.Logger.LogInformation(
             "Successfully appended {Count} events to stream {Stream}. GlobalPosition: {GlobalPosition}, NextVersion: {NextVersion}",
             events.Length, streamName, result.GlobalPosition, result.NextExpectedVersion
@@ -99,11 +100,11 @@ public class AzureEventHubsIntegrationTests {
         // we might not immediately see all events in a single read operation
         // In a production scenario, you'd implement proper retry logic
         Assert.True(readEvents.Length >= 0, "Should be able to read events without errors");
-        
+
         foreach (var readEvent in readEvents) {
             Assert.NotNull(readEvent.Payload);
             Assert.IsType<TestEvent>(readEvent.Payload);
-            
+
             var testEvent = (TestEvent)readEvent.Payload;
             _fixture.Logger.LogInformation(
                 "Read event: Id={Id}, Name={Name}, CreatedAt={CreatedAt}",
