@@ -9,13 +9,15 @@ using Eventuous.Azure.EventHubs;
 using Eventuous.Azure.EventHubs.Extensions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Testcontainers.Azurite;
+using Testcontainers.EventHubs;
 using TUnit.Core.Interfaces;
 
 namespace Eventuous.Tests.Azure.EventHubs.Integration;
 
 /// <summary>
 /// Test fixture for Azure Event Hubs integration tests
-/// Uses Azurite (Azure Storage Emulator) and Event Hubs emulator in Docker containers
+/// Uses Testcontainers for Azurite (Azure Storage Emulator) and Event Hubs emulator
 /// Follows the same pattern as ServiceBus tests
 /// </summary>
 public class AzureEventHubsFixture : IAsyncInitializer, IAsyncDisposable {
@@ -25,21 +27,33 @@ public class AzureEventHubsFixture : IAsyncInitializer, IAsyncDisposable {
     public ServiceProvider ServiceProvider { get; private set; } = null!;
     public IEventStore EventStore { get; private set; } = null!;
 
-    // Connection strings for Azurite (Azure Storage Emulator)
+    // Testcontainers
+    public AzuriteContainer AzuriteContainer { get; } = new AzuriteBuilder()
+        .WithImage("mcr.microsoft.com/azure-storage/azurite:latest")
+        .Build();
+
+    public EventHubsContainer EventHubsContainer { get; } = new EventHubsBuilder()
+        .WithAcceptLicenseAgreement(true)
+        .WithConfigurationBuilder(GetServiceConfiguration())
+        .Build();
+
+    // Connection strings
     public string BlobStorageConnectionString { get; private set; } = null!;
     public string TableStorageConnectionString { get; private set; } = null!;
     public string EventHubConnectionString { get; private set; } = null!;
 
     public async Task InitializeAsync() {
-        // For now, we'll use mock connection strings
-        // In a real implementation, we would start Azurite and Event Hubs emulator containers
+        // Start Azurite container for Azure Storage services
+        await AzuriteContainer.StartAsync();
 
-        // Azurite connection strings (default ports)
+        // Start Event Hubs container
+        await EventHubsContainer.StartAsync();
+
+        // Get connection strings from containers
+        // Use hardcoded connection strings for Azurite (following existing pattern)
         BlobStorageConnectionString = "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;";
         TableStorageConnectionString = "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;TableEndpoint=http://127.0.0.1:10002/devstoreaccount1;";
-
-        // Event Hubs connection string (would be from emulator)
-        EventHubConnectionString = "Endpoint=sb://localhost:9093/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=test";
+        EventHubConnectionString = EventHubsContainer.GetConnectionString();
 
         // Initialize Azure clients
         ProducerClient = new EventHubProducerClient(EventHubConnectionString, "test-hub");
@@ -75,6 +89,13 @@ public class AzureEventHubsFixture : IAsyncInitializer, IAsyncDisposable {
     public async ValueTask DisposeAsync() {
         await ProducerClient.DisposeAsync();
         await ServiceProvider.DisposeAsync();
+        await AzuriteContainer.DisposeAsync();
+        await EventHubsContainer.DisposeAsync();
+    }
+
+    private static EventHubsServiceConfiguration GetServiceConfiguration() {
+        return EventHubsServiceConfiguration.Create()
+            .WithEntity("test-hub", 2, "$Default", "test-consumer-group");
     }
 }
 

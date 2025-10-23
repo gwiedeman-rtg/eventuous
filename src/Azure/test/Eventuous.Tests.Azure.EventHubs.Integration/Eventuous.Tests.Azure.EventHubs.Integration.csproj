@@ -13,6 +13,7 @@
     <PackageReference Include="coverlet.collector" />
     <PackageReference Include="Hypothesist" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="TUnit" />
     <PackageReference Include="Testcontainers.Azurite" />
     <PackageReference Include="Testcontainers.EventHubs" />
   </ItemGroup>

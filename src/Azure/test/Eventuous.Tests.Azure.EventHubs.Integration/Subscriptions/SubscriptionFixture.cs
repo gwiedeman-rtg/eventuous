@@ -43,7 +43,6 @@ public class SubscriptionFixture : IAsyncInitializer, IAsyncDisposable {
 
         // Initialize Docker container
         Container = EventHubsContainerBuilder.CreateBuilder(network, azuriteContainer)
-            .WithConfigurationBuilder()
             .Build();
         await Container.StartAsync();
 

@@ -4,6 +4,8 @@
 using Eventuous.Azure.EventHubs.Subscriptions;
 using Eventuous.Tests.Azure.EventHubs.Integration.Subscriptions;
 using TUnit.Assertions.AssertConditions.Throws;
+using TUnit.Core;
+using TUnit.Assertions;
 
 // ReSharper disable UnusedType.Global
 

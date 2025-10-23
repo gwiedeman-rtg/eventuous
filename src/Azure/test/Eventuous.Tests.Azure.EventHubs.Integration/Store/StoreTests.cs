@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0.
 
 using Eventuous.Tests.Persistence.Base.Store;
+using TUnit.Core;
 
 // ReSharper disable UnusedType.Global
 

@@ -5,6 +5,7 @@ using Eventuous.Subscriptions;
 using Eventuous.Subscriptions.Context;
 using Hypothesist;
 using Hypothesist.Builders;
+using TUnit.Core;
 
 namespace Eventuous.Tests.Azure.EventHubs.Integration.Subscriptions;
 
