@@ -77,4 +77,3 @@ public class AzureEventHubsFixture : IAsyncInitializer, IAsyncDisposable {
         await ServiceProvider.DisposeAsync();
     }
 }
-

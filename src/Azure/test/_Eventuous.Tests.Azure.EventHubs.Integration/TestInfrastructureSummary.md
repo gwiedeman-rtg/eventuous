@@ -133,4 +133,3 @@ dotnet test src/Azure/test/Eventuous.Tests.Azure.EventHubs.Integration/
 ```
 
 This approach provides **real Azure service behavior** without the complexity of complex mocking infrastructure, following the established patterns in the Eventuous solution! 🚀
-

@@ -1,22 +1,30 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>net8.0;net9.0</TargetFrameworks>
+    <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
-    <IsTestProject>true</IsTestProject>
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Azure.Messaging.EventHubs" />
+    <PackageReference Include="Azure.Storage.Blobs" />
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Hypothesist" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
-    <PackageReference Include="TUnit" />
+    <PackageReference Include="Testcontainers.Azurite" />
+    <PackageReference Include="Testcontainers.EventHubs" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Eventuous.Azure.EventHubs\Eventuous.Azure.EventHubs.csproj" />
+    <ProjectReference Include="..\..\..\Core\src\Eventuous.Subscriptions\Eventuous.Subscriptions.csproj" />
+    <ProjectReference Include="..\..\..\Core\src\Eventuous\Eventuous.csproj" />
     <ProjectReference Include="..\..\..\Core\test\Eventuous.Tests.Persistence.Base\Eventuous.Tests.Persistence.Base.csproj" />
-    <ProjectReference Include="..\..\..\Core\test\Eventuous.Tests.Subscriptions.Base\Eventuous.Tests.Subscriptions.Base.csproj" />
+    <ProjectReference Include="..\..\src\Eventuous.Azure.EventHubs\Eventuous.Azure.EventHubs.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
   </ItemGroup>
 
 </Project>

@@ -43,18 +43,9 @@ public class StoreFixture : StoreFixtureBase<Testcontainers.EventHubs.EventHubsC
         });
         
         // Register the EventStore service - base class will automatically set EventStore property
-        //services.AddEventStore<AzureEventHubsEventStore>();
+        services.AddEventStore<AzureEventHubsEventStore>();
     }
 
-    protected override Testcontainers.EventHubs.EventHubsContainer CreateContainer()
-    {
-        var network = EventHubsContainerBuilder.CreateNetwork();
-
-        var azuriteContainer = EventHubsContainerBuilder.Create().WithNetwork(network).Build();
-
-        azuriteContainer.StartAsync().GetAwaiter().GetResult(); 
-
-        return EventHubsContainerBuilder.CreateBuilder(network, azuriteContainer).Build();
-    }
-        
+    protected override Testcontainers.EventHubs.EventHubsContainer CreateContainer() => 
+        EventHubsContainerBuilder.CreateBuilder().Build();
 }
