@@ -35,15 +35,18 @@ public class SubscriptionFixture : IAsyncInitializer, IAsyncDisposable {
     }
 
     public async Task InitializeAsync() {
-        var network = EventHubsContainerBuilder.CreateNetwork();
+        //var network = EventHubsContainerBuilder.CreateNetwork();
 
-        var azuriteContainer = EventHubsContainerBuilder.Create().WithNetwork(network).Build();
+        //var azuriteContainer = EventHubsContainerBuilder.Create().WithNetwork(network).Build();
 
-        azuriteContainer.StartAsync().GetAwaiter().GetResult();
+        //// Start Azurite and wait for it to be ready
+        //await azuriteContainer.StartAsync();
+
+        //// Give Azurite extra time to fully initialize all services
+        //await Task.Delay(TimeSpan.FromSeconds(30));
 
         // Initialize Docker container
-        Container = EventHubsContainerBuilder.CreateBuilder(network, azuriteContainer)
-            .Build();
+        Container = EventHubsContainerBuilder.CreateBuilder().Build();
         await Container.StartAsync();
 
         // Get connection string from container

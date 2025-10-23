@@ -25,7 +25,7 @@ public class StoreFixture : StoreFixtureBase<Testcontainers.EventHubs.EventHubsC
     protected override void SetupServices(IServiceCollection services) {
         // Get connection string from container (base class provides Container property)
         EventHubConnectionString = Container.GetConnectionString();
-        
+
         // Event Hubs emulator includes internal Azurite, so we use the same connection strings
         // The emulator provides blob and table storage endpoints
         BlobStorageConnectionString = "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;";
@@ -41,20 +41,16 @@ public class StoreFixture : StoreFixtureBase<Testcontainers.EventHubs.EventHubsC
             options.ConsumerGroup = "$Default";
             options.UseRealtimeReading = true;
         });
-        
+
         // Register the EventStore service - base class will automatically set EventStore property
         //services.AddEventStore<AzureEventHubsEventStore>();
     }
 
     protected override Testcontainers.EventHubs.EventHubsContainer CreateContainer()
     {
-        var network = EventHubsContainerBuilder.CreateNetwork();
+       
 
-        var azuriteContainer = EventHubsContainerBuilder.Create().WithNetwork(network).Build();
-
-        azuriteContainer.StartAsync().GetAwaiter().GetResult(); 
-
-        return EventHubsContainerBuilder.CreateBuilder(network, azuriteContainer).Build();
+        return EventHubsContainerBuilder.CreateSimpleBuilder().Build();
     }
-        
+
 }
