@@ -8,21 +8,18 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Azure.Messaging.EventHubs" />
-    <PackageReference Include="Azure.Storage.Blobs" />
-    <PackageReference Include="coverlet.collector" />
-    <PackageReference Include="Hypothesist" />
-    <PackageReference Include="Microsoft.NET.Test.Sdk" />
-    <PackageReference Include="TUnit" />
-    <PackageReference Include="Testcontainers.Azurite" />
+
     <PackageReference Include="Testcontainers.EventHubs" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\..\Core\src\Eventuous.Subscriptions\Eventuous.Subscriptions.csproj" />
-    <ProjectReference Include="..\..\..\Core\src\Eventuous\Eventuous.csproj" />
-    <ProjectReference Include="..\..\..\Core\test\Eventuous.Tests.Persistence.Base\Eventuous.Tests.Persistence.Base.csproj" />
-    <ProjectReference Include="..\..\src\Eventuous.Azure.EventHubs\Eventuous.Azure.EventHubs.csproj" />
+    <ProjectReference Include="$(LocalRoot)\Eventuous.Azure.EventHubs\Eventuous.Azure.EventHubs.csproj" />
+    <ProjectReference Include="$(DiagRoot)\Eventuous.Diagnostics.OpenTelemetry\Eventuous.Diagnostics.OpenTelemetry.csproj"/>
+    <ProjectReference Include="$(DiagRoot)\Eventuous.Diagnostics.Logging\Eventuous.Diagnostics.Logging.csproj"/>
+    <ProjectReference Include="$(ExtRoot)\Eventuous.Extensions.DependencyInjection\Eventuous.Extensions.DependencyInjection.csproj"/>
+    <ProjectReference Include="$(CoreTestRoot)\Eventuous.Tests.Persistence.Base\Eventuous.Tests.Persistence.Base.csproj"/>
+    <ProjectReference Include="$(SrcRoot)\Diagnostics\test\Eventuous.Tests.OpenTelemetry\Eventuous.Tests.OpenTelemetry.csproj"/>
+    <ProjectReference Include="$(CoreTestRoot)\Eventuous.Tests.Subscriptions.Base\Eventuous.Tests.Subscriptions.Base.csproj"/>
   </ItemGroup>
 
   <ItemGroup>

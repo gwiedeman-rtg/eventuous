@@ -19,26 +19,10 @@ public static class EventHubsContainerBuilder {
     /// <returns>Configured EventHubsBuilder</returns>
     public static EventHubsBuilder CreateBuilder()
         => new EventHubsBuilder()
-            //.WithImage("mcr.microsoft.com/azure-messaging/eventhubs-emulator:2.0.1")
             .WithAcceptLicenseAgreement(true)
-            //.WithAzuriteContainer(network, azurite, "eventhubs_test_network")
             .WithConfigurationBuilder(GetServiceConfiguration())
-            //.WithEnvironment("AZURE_STORAGE_CONNECTION_STRING", "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;")
-            //.WithWaitStrategy(Wait.ForUnixContainer()
-            //    .WithStartupCallback((container, ct) =>
-            //        Task.Delay(TimeSpan.FromSeconds(120), ct))); // Give more time for emulator to start
             ;
 
-    /// <summary>
-    /// Creates a simple EventHubsBuilder for use with real Azure Event Hubs
-    /// This bypasses the emulator issues by using the actual service
-    /// </summary>
-    /// <returns>Configured EventHubsBuilder</returns>
-    public static EventHubsBuilder CreateSimpleBuilder()
-        => new EventHubsBuilder()
-            //.WithImage("mcr.microsoft.com/azure-messaging/eventhubs-emulator:2.0.1")
-            .WithAcceptLicenseAgreement(true)
-            .WithConfigurationBuilder(GetServiceConfiguration());
 
     /// <summary>
     /// Creates the service configuration for Event Hubs testing

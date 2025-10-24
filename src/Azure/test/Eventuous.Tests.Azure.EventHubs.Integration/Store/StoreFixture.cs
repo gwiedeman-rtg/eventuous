@@ -50,7 +50,7 @@ public class StoreFixture : StoreFixtureBase<Testcontainers.EventHubs.EventHubsC
     {
        
 
-        return EventHubsContainerBuilder.CreateSimpleBuilder().Build();
+        return EventHubsContainerBuilder.CreateBuilder().Build();
     }
 
 }
