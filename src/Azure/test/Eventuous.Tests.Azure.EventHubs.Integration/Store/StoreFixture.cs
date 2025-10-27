@@ -31,7 +31,8 @@ public class StoreFixture : StoreFixtureBase<Testcontainers.EventHubs.EventHubsC
         BlobStorageConnectionString = "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;";
         TableStorageConnectionString = "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;TableEndpoint=http://127.0.0.1:10002/devstoreaccount1;";
 
-        // Add Azure Event Hubs Event Store with atomic versioning enabled
+        // Add Azure Event Hubs Event Store
+        // Note: Atomic versioning is disabled by default to avoid requiring Table Storage for tests
         services.AddAzureEventHubsEventStore(options => {
             options.EventHubConnectionString = EventHubConnectionString;
             options.EventHubName = "test-hub";
@@ -40,7 +41,7 @@ public class StoreFixture : StoreFixtureBase<Testcontainers.EventHubs.EventHubsC
             options.TableStorageConnectionString = TableStorageConnectionString;
             options.ConsumerGroup = "$Default";
             options.UseRealtimeReading = true;
-            options.EnableAtomicVersioning = true; // Enable atomic versioning for tests
+            options.EnableAtomicVersioning = false; // Disabled by default - enable when testing atomic versioning
         });
 
         // Register the EventStore service - base class will automatically set EventStore property
