@@ -254,7 +254,9 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
 
             // Send the final batch
             if (eventDataBatch.Count > 0) {
+                _logger?.LogInformation("Sending {Count} events to Event Hubs for stream {Stream}", eventDataBatch.Count, stream);
                 await _producerClient.SendAsync(eventDataBatch, cancellationToken).NoContext();
+                _logger?.LogInformation("Successfully sent {Count} events to Event Hubs for stream {Stream}", eventDataBatch.Count, stream);
             }
 
             // Calculate next version
@@ -414,7 +416,11 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     EventData ToEventData(NewStreamEvent streamEvent, StreamName stream) {
         var (eventType, contentType, payload) = _serializer.SerializeEvent(streamEvent.Payload!);
+        _logger?.LogDebug("Serialized event: Type={EventType}, ContentType={ContentType}, PayloadLength={Length}, Stream={Stream}",
+            eventType, contentType, payload.Length, stream);
+
         var metadata = _metaSerializer.Serialize(streamEvent.Metadata);
+        _logger?.LogDebug("Serialized metadata: Length={Length}", metadata.Length);
 
         var eventData = new EventData(payload) {
             MessageId = streamEvent.Id.ToString(),
@@ -428,6 +434,10 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
         if (metadata.Length > 0) {
             eventData.Properties["Metadata"] = Convert.ToBase64String(metadata);
         }
+
+        _logger?.LogDebug("Created EventData: MessageId={MessageId}, BodyLength={BodyLength}, Properties={Properties}",
+            eventData.MessageId, eventData.EventBody.Length,
+            string.Join(", ", eventData.Properties.Select(kvp => $"{kvp.Key}={kvp.Value}")));
 
         return eventData;
     }

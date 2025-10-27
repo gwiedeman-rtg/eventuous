@@ -27,8 +27,15 @@ public class DefaultEventSerializer(JsonSerializerOptions options, ITypeMapper? 
             : new FailedToDeserialize(DeserializationError.PayloadEmpty);
     }
 
-    public SerializationResult SerializeEvent(object evt)
-        => new(_typeMapper.GetTypeName(evt), ContentType, JsonSerializer.SerializeToUtf8Bytes(evt, options));
+    public SerializationResult SerializeEvent(object evt) {
+        var eventType = _typeMapper.GetTypeName(evt);
+        var payload = JsonSerializer.SerializeToUtf8Bytes(evt, options);
+
+        // Log serialization details for debugging
+        System.Diagnostics.Debug.WriteLine($"Eventuous: Serialized event type={eventType}, payloadLength={payload.Length}");
+
+        return new(eventType, ContentType, payload);
+    }
 
     public string ContentType { get; } = "application/json";
 }

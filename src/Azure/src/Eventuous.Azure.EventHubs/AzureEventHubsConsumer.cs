@@ -85,13 +85,13 @@ public class AzureEventHubsConsumer : IDisposable {
         ) {
         var events = new List<StreamEvent>();
         var readTimeout = timeout ?? TimeSpan.FromSeconds(30);
-        
+
         try {
             using var combinedCts = CancellationTokenSource.CreateLinkedTokenSource(
                 cancellationToken,
                 _cancellationTokenSource.Token
             );
-            
+
             combinedCts.CancelAfter(readTimeout);
 
             var readOptions = new ReadEventOptions {
@@ -100,10 +100,10 @@ public class AzureEventHubsConsumer : IDisposable {
 
             // Read from all partitions to find events for this stream
             var partitionIds = await _consumerClient.GetPartitionIdsAsync(combinedCts.Token).NoContext();
-            
+
             var readTasks = partitionIds.Select(async partitionId => {
                 var partitionEvents = new List<StreamEvent>();
-                
+
                 await foreach (var partitionEvent in _consumerClient.ReadEventsFromPartitionAsync(
                     partitionId,
                     startPosition,
@@ -111,18 +111,18 @@ public class AzureEventHubsConsumer : IDisposable {
                     combinedCts.Token
                 )) {
                     if (partitionEvents.Count >= maxEvents) break;
-                    
+
                     var streamEvent = ConvertToStreamEvent(partitionEvent, stream);
                     if (streamEvent != null) {
                         partitionEvents.Add(streamEvent.Value);
                     }
                 }
-                
+
                 return partitionEvents;
             });
 
             var allPartitionEvents = await Task.WhenAll(readTasks).NoContext();
-            
+
             // Combine and sort events by sequence number
             events = allPartitionEvents
                 .SelectMany(x => x)
@@ -159,13 +159,13 @@ public class AzureEventHubsConsumer : IDisposable {
         ) {
         var events = new List<StreamEvent>();
         var readTimeout = timeout ?? TimeSpan.FromSeconds(30);
-        
+
         try {
             using var combinedCts = CancellationTokenSource.CreateLinkedTokenSource(
                 cancellationToken,
                 _cancellationTokenSource.Token
             );
-            
+
             combinedCts.CancelAfter(readTimeout);
 
             var readOptions = new ReadEventOptions {
@@ -174,10 +174,10 @@ public class AzureEventHubsConsumer : IDisposable {
 
             // Read from all partitions
             var partitionIds = await _consumerClient.GetPartitionIdsAsync(combinedCts.Token).NoContext();
-            
+
             var readTasks = partitionIds.Select(async partitionId => {
                 var partitionEvents = new List<StreamEvent>();
-                
+
                 await foreach (var partitionEvent in _consumerClient.ReadEventsFromPartitionAsync(
                     partitionId,
                     startPosition,
@@ -185,18 +185,18 @@ public class AzureEventHubsConsumer : IDisposable {
                     combinedCts.Token
                 )) {
                     if (partitionEvents.Count >= maxEvents) break;
-                    
+
                     var streamEvent = ConvertToStreamEvent(partitionEvent);
                     if (streamEvent != null) {
                         partitionEvents.Add(streamEvent.Value);
                     }
                 }
-                
+
                 return partitionEvents;
             });
 
             var allPartitionEvents = await Task.WhenAll(readTasks).NoContext();
-            
+
             // Combine and sort events by sequence number
             events = allPartitionEvents
                 .SelectMany(x => x)
@@ -221,11 +221,21 @@ public class AzureEventHubsConsumer : IDisposable {
     StreamEvent? ConvertToStreamEvent(PartitionEvent partitionEvent, StreamName? targetStream = null) {
         try {
             var eventData = partitionEvent.Data;
-            
+
+            if (eventData == null) {
+                _logger?.LogWarning("partitionEvent.Data is null");
+                return null;
+            }
+
+            _logger?.LogDebug("Converting partition event: MessageId={MessageId}, BodyLength={BodyLength}",
+                eventData.MessageId, eventData.EventBody.IsEmpty ? 0 : eventData.EventBody.Length);
+
             // Check if this event belongs to the target stream (if specified)
             if (targetStream != null) {
                 if (!eventData.Properties.TryGetValue("StreamName", out var streamNameObj) ||
                     streamNameObj?.ToString() != targetStream.ToString()) {
+                    _logger?.LogDebug("Event belongs to different stream: Expected={Expected}, Actual={Actual}",
+                        targetStream, streamNameObj?.ToString() ?? "null");
                     return null;
                 }
             }
@@ -242,7 +252,7 @@ public class AzureEventHubsConsumer : IDisposable {
                 eventType,
                 eventData.ContentType ?? "application/json"
             );
-            
+
             if (deserialized is not SuccessfullyDeserialized success) {
                 _logger?.LogWarning("Failed to deserialize event of type {EventType}", eventType);
                 return null;
@@ -281,7 +291,7 @@ public class AzureEventHubsConsumer : IDisposable {
 
     public void Dispose() {
         if (_disposed) return;
-        
+
         _cancellationTokenSource.Cancel();
         _cancellationTokenSource.Dispose();
         _consumerClient.DisposeAsync().GetAwaiter().GetResult();
