@@ -10,6 +10,7 @@ using Azure.Messaging.EventHubs;
 using Azure.Messaging.EventHubs.Producer;
 using Azure.Messaging.EventHubs.Consumer;
 using Azure.Storage.Blobs;
+using Azure.Data.Tables;
 using Eventuous.Diagnostics;
 using Eventuous.Diagnostics.Tracing;
 using Eventuous.Producers;
@@ -152,15 +153,17 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
                 }
             }
             // Handle Any case - always allow
-            else if (expectedVersion != ExpectedStreamVersion.Any && currentVersion.HasValue) {
-                // Stream exists, check version match
-                if (currentVersion.Value != expectedVersion.Value) {
-                    throw new AppendToStreamException(stream, new InvalidOperationException($"WrongExpectedVersion {expectedVersion.Value}, current version {currentVersion.Value}"));
+            else if (expectedVersion != ExpectedStreamVersion.Any) {
+                // Stream exists or doesn't, check version match
+                if (expectedVersion != ExpectedStreamVersion.NoStream) {
+                    // Expected version is a specific number (0, 1, 2, ...)
+                    if (!currentVersion.HasValue) {
+                        throw new AppendToStreamException(stream, new InvalidOperationException($"WrongExpectedVersion {expectedVersion.Value}, stream doesn't exist"));
+                    }
+                    if (currentVersion.Value != expectedVersion.Value) {
+                        throw new AppendToStreamException(stream, new InvalidOperationException($"WrongExpectedVersion {expectedVersion.Value}, current version {currentVersion.Value}"));
+                    }
                 }
-            }
-            // Handle case where we expect a stream to exist but it doesn't
-            else if (expectedVersion >= ExpectedStreamVersion.NoStream && !currentVersion.HasValue) {
-                throw new AppendToStreamException(stream, new InvalidOperationException($"WrongExpectedVersion {expectedVersion.Value}, stream doesn't exist"));
             }
 
             var eventDataBatch = await _producerClient.CreateBatchAsync(cancellationToken).NoContext();
