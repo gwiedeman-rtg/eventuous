@@ -26,8 +26,9 @@ public class StoreFixture : StoreFixtureBase<Testcontainers.EventHubs.EventHubsC
         // Get connection string from container (base class provides Container property)
         EventHubConnectionString = Container.GetConnectionString();
 
-        // Event Hubs emulator includes internal Azurite, so we use the same connection strings
-        // The emulator provides blob and table storage endpoints
+        // NOTE: The Event Hubs emulator includes internal Azurite, but the ports may not be exposed.
+        // For now, we use localhost endpoints assuming Azurite ports are mapped at the Docker level.
+        // If these don't work, we may need to run a separate Azurite container or disable blob capture tests.
         BlobStorageConnectionString = "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;";
         TableStorageConnectionString = "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;TableEndpoint=http://127.0.0.1:10002/devstoreaccount1;";
 

@@ -215,9 +215,10 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
                 currentVersion = null;
             }
 
-            // Handle NoStream case
+            // Handle NoStream case - need to check if stream exists
             if (expectedVersion == ExpectedStreamVersion.NoStream) {
-                if (currentVersion.HasValue) {
+                var streamExists = await StreamExists(stream, cancellationToken).NoContext();
+                if (streamExists) {
                     throw new AppendToStreamException(stream, new InvalidOperationException($"WrongExpectedVersion {-1}, stream already exists"));
                 }
             }
