@@ -35,6 +35,7 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
     readonly string                             _captureContainerName;
     readonly bool                               _useRealtimeReading;
     readonly ILoggerFactory?                    _loggerFactory;
+    readonly HashSet<string>                     _appendedStreams = new(); // Track streams we've appended to in this session
 
     bool _disposed;
 
@@ -143,27 +144,37 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
         }
 
         try {
-            // Check expected version for optimistic concurrency
-            var currentVersion = await GetCurrentStreamVersion(stream, cancellationToken).NoContext();
+            long? currentVersion = null;
 
-            // Handle NoStream case
+            // Handle NoStream case - check if stream exists
             if (expectedVersion == ExpectedStreamVersion.NoStream) {
-                if (currentVersion.HasValue) {
+                // Check if we've already appended to this stream in this session (for immediate consistency)
+                if (_appendedStreams.Contains(stream.ToString())) {
                     throw new AppendToStreamException(stream, new InvalidOperationException($"WrongExpectedVersion {-1}, stream already exists"));
                 }
-            }
-            // Handle Any case - always allow
-            else if (expectedVersion != ExpectedStreamVersion.Any) {
-                // Stream exists or doesn't, check version match
-                if (expectedVersion != ExpectedStreamVersion.NoStream) {
-                    // Expected version is a specific number (0, 1, 2, ...)
-                    if (!currentVersion.HasValue) {
-                        throw new AppendToStreamException(stream, new InvalidOperationException($"WrongExpectedVersion {expectedVersion.Value}, stream doesn't exist"));
-                    }
-                    if (currentVersion.Value != expectedVersion.Value) {
-                        throw new AppendToStreamException(stream, new InvalidOperationException($"WrongExpectedVersion {expectedVersion.Value}, current version {currentVersion.Value}"));
-                    }
+                // Also check blob storage in case stream was created in a previous session
+                var streamExists = await StreamExists(stream, cancellationToken).NoContext();
+                if (streamExists) {
+                    throw new AppendToStreamException(stream, new InvalidOperationException($"WrongExpectedVersion {-1}, stream already exists"));
                 }
+                // For NoStream, currentVersion should be null (doesn't exist)
+                currentVersion = null;
+            }
+            // Check expected version for optimistic concurrency (skip for Any)
+            else if (expectedVersion != ExpectedStreamVersion.Any) {
+                currentVersion = await GetCurrentStreamVersion(stream, cancellationToken).NoContext();
+
+                // Expected version is a specific number (0, 1, 2, ...)
+                if (!currentVersion.HasValue) {
+                    throw new AppendToStreamException(stream, new InvalidOperationException($"WrongExpectedVersion {expectedVersion.Value}, stream doesn't exist"));
+                }
+                if (currentVersion.Value != expectedVersion.Value) {
+                    throw new AppendToStreamException(stream, new InvalidOperationException($"WrongExpectedVersion {expectedVersion.Value}, current version {currentVersion.Value}"));
+                }
+            }
+            // For Any, we still need to get the current version to calculate next expected version
+            else {
+                currentVersion = await GetCurrentStreamVersion(stream, cancellationToken).NoContext();
             }
 
             var eventDataBatch = await _producerClient.CreateBatchAsync(cancellationToken).NoContext();
@@ -192,6 +203,9 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
             // Event Hubs doesn't provide a global position like EventStore, so we use a timestamp-based approach
             var globalPosition = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var nextExpectedVersion = currentVersion.HasValue ? currentVersion.Value + events.Count : events.Count - 1;
+
+            // Track that we've appended to this stream (for NoStream checks)
+            _appendedStreams.Add(stream.ToString());
 
             return new AppendEventsResult(globalPosition, nextExpectedVersion);
         } catch (AppendToStreamException) {
