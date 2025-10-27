@@ -8,6 +8,11 @@ using Eventuous.Subscriptions;
 using Eventuous.Subscriptions.Checkpoints;
 using Eventuous.Subscriptions.Filters;
 using Eventuous.Azure.EventHubs.Subscriptions;
+using Azure.Data.Tables;
+using Azure.Storage.Blobs;
+using Azure.Messaging.EventHubs.Producer;
+using Azure.Messaging.EventHubs.Consumer;
+using Microsoft.Extensions.Logging;
 
 namespace Eventuous.Azure.EventHubs.Extensions;
 
@@ -27,6 +32,15 @@ public static class ServiceCollectionExtensions {
         ) {
         services.Configure(configureOptions);
 
+        // Register TableServiceClient if atomic versioning is enabled and table storage is configured
+        services.AddSingleton<TableServiceClient>(serviceProvider => {
+            var options = serviceProvider.GetRequiredService<IOptions<AzureEventHubsEventStoreOptions>>().Value;
+            if (options.EnableAtomicVersioning && !string.IsNullOrWhiteSpace(options.TableStorageConnectionString)) {
+                return new TableServiceClient(options.TableStorageConnectionString);
+            }
+            return null!; // Will be handled in the event store constructor
+        });
+
         services.AddSingleton<IEventStore>(serviceProvider => {
             var options = serviceProvider.GetRequiredService<IOptions<AzureEventHubsEventStoreOptions>>().Value;
             options.Validate();
@@ -34,6 +48,8 @@ public static class ServiceCollectionExtensions {
             var serializer = serviceProvider.GetService<IEventSerializer>();
             var metaSerializer = serviceProvider.GetService<IMetadataSerializer>();
             var logger = serviceProvider.GetService<ILogger<AzureEventHubsEventStore>>();
+            var loggerFactory = serviceProvider.GetService<ILoggerFactory>();
+            var tableServiceClient = serviceProvider.GetService<TableServiceClient>();
 
             return new AzureEventHubsEventStore(
                 new EventHubProducerClient(options.EventHubConnectionString, options.EventHubName),
@@ -45,7 +61,10 @@ public static class ServiceCollectionExtensions {
                 serializer,
                 metaSerializer,
                 logger,
-                serviceProvider.GetService<ILoggerFactory>()
+                loggerFactory,
+                tableServiceClient,
+                options.EnableAtomicVersioning,
+                options.VersionLockContainerName
             );
         });
 
@@ -62,6 +81,9 @@ public static class ServiceCollectionExtensions {
     /// <param name="eventHubName">Event Hub name</param>
     /// <param name="captureContainerName">Capture container name</param>
     /// <param name="useRealtimeReading">Whether to use real-time reading from Event Hubs</param>
+    /// <param name="tableServiceClient">Optional table service client for atomic versioning</param>
+    /// <param name="enableAtomicVersioning">Whether to enable atomic version control</param>
+    /// <param name="versionLockContainer">Container name for blob lease versioning</param>
     /// <returns>Service collection for chaining</returns>
     public static IServiceCollection AddAzureEventHubsEventStore(
             this IServiceCollection services,
@@ -70,12 +92,16 @@ public static class ServiceCollectionExtensions {
             BlobServiceClient       blobServiceClient,
             string                  eventHubName,
             string                  captureContainerName,
-            bool                    useRealtimeReading = true
+            bool                    useRealtimeReading = true,
+            TableServiceClient?     tableServiceClient = null,
+            bool                   enableAtomicVersioning = false,
+            string?                versionLockContainer = null
         ) {
         services.AddSingleton<IEventStore>(serviceProvider => {
             var serializer = serviceProvider.GetService<IEventSerializer>();
             var metaSerializer = serviceProvider.GetService<IMetadataSerializer>();
             var logger = serviceProvider.GetService<ILogger<AzureEventHubsEventStore>>();
+            var loggerFactory = serviceProvider.GetService<ILoggerFactory>();
 
             return new AzureEventHubsEventStore(
                 producerClient,
@@ -86,7 +112,11 @@ public static class ServiceCollectionExtensions {
                 useRealtimeReading,
                 serializer,
                 metaSerializer,
-                logger
+                logger,
+                loggerFactory,
+                tableServiceClient,
+                enableAtomicVersioning,
+                versionLockContainer
             );
         });
 

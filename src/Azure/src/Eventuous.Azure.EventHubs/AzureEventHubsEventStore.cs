@@ -12,6 +12,7 @@ using Azure.Messaging.EventHubs.Consumer;
 using Azure.Storage.Blobs;
 using Azure.Data.Tables;
 using Eventuous.Diagnostics;
+using Eventuous.Azure.EventHubs.Versioning;
 using Eventuous.Diagnostics.Tracing;
 using Eventuous.Producers;
 using Microsoft.Extensions.Logging;
@@ -35,7 +36,7 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
     readonly string                             _captureContainerName;
     readonly bool                               _useRealtimeReading;
     readonly ILoggerFactory?                    _loggerFactory;
-    readonly HashSet<string>                     _appendedStreams = new(); // Track streams we've appended to in this session
+    readonly IStreamVersionStrategy             _versionStrategy;
 
     bool _disposed;
 
@@ -52,6 +53,9 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
     /// <param name="metaSerializer">Optional metadata serializer. When not provided, the default serializer will be used.</param>
     /// <param name="logger">Optional logger</param>
     /// <param name="loggerFactory"></param>
+    /// <param name="tableServiceClient">Optional table service client for atomic versioning</param>
+    /// <param name="enableAtomicVersioning">Whether to enable atomic version control</param>
+    /// <param name="versionLockContainer">Container name for blob lease versioning</param>
     public AzureEventHubsEventStore(
             EventHubProducerClient              producerClient,
             EventHubConsumerClient              consumerClient,
@@ -62,7 +66,10 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
             IEventSerializer?                   serializer     = null,
             IMetadataSerializer?                metaSerializer = null,
             ILogger<AzureEventHubsEventStore>?  logger         = null,
-            ILoggerFactory?                     loggerFactory = null
+            ILoggerFactory?                     loggerFactory = null,
+            TableServiceClient?                 tableServiceClient = null,
+            bool                                enableAtomicVersioning = false,
+            string?                             versionLockContainer = null
         ) {
         _logger               = logger;
         _producerClient       = Ensure.NotNull(producerClient);
@@ -74,6 +81,13 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
         _metaSerializer       = metaSerializer ?? DefaultMetadataSerializer.Instance;
         _loggerFactory        = loggerFactory;
         _consumer             = new AzureEventHubsConsumer(consumerClient, serializer, metaSerializer, loggerFactory?.CreateLogger<AzureEventHubsConsumer>());
+
+        // Initialize version strategy based on configuration
+        _versionStrategy = enableAtomicVersioning
+            ? (tableServiceClient != null
+                ? new TableStorageVersionStrategy(tableServiceClient, loggerFactory?.CreateLogger<TableStorageVersionStrategy>())
+                : new BlobLeaseVersionStrategy(blobServiceClient, versionLockContainer ?? "eventuous-locks", loggerFactory?.CreateLogger<BlobLeaseVersionStrategy>()))
+            : new NonAtomicVersionStrategy(this, loggerFactory?.CreateLogger<NonAtomicVersionStrategy>());
     }
 
     /// <summary>
@@ -88,6 +102,9 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
     /// <param name="serializer">Optional event serializer. When not provided, the default serializer will be used.</param>
     /// <param name="metaSerializer">Optional metadata serializer. When not provided, the default serializer will be used.</param>
     /// <param name="logger">Optional logger</param>
+    /// <param name="tableStorageConnectionString">Optional table storage connection string for atomic versioning</param>
+    /// <param name="enableAtomicVersioning">Whether to enable atomic version control</param>
+    /// <param name="versionLockContainer">Container name for blob lease versioning</param>
     public AzureEventHubsEventStore(
             string                              eventHubConnectionString,
             string                              eventHubName,
@@ -97,7 +114,10 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
             bool                                useRealtimeReading = true,
             IEventSerializer?                   serializer     = null,
             IMetadataSerializer?                metaSerializer = null,
-            ILogger<AzureEventHubsEventStore>?  logger         = null
+            ILogger<AzureEventHubsEventStore>?  logger         = null,
+            string?                             tableStorageConnectionString = null,
+            bool                                enableAtomicVersioning = false,
+            string?                             versionLockContainer = null
         ) : this(
             new EventHubProducerClient(Ensure.NotEmptyString(eventHubConnectionString), Ensure.NotEmptyString(eventHubName)),
             new EventHubConsumerClient(consumerGroup, Ensure.NotEmptyString(eventHubConnectionString), Ensure.NotEmptyString(eventHubName)),
@@ -107,22 +127,63 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
             useRealtimeReading,
             serializer,
             metaSerializer,
-            logger
+            logger,
+            null, // loggerFactory
+            !string.IsNullOrWhiteSpace(tableStorageConnectionString) ? new TableServiceClient(tableStorageConnectionString) : null,
+            enableAtomicVersioning,
+            versionLockContainer
         ) { }
 
     /// <inheritdoc/>
     public async Task<bool> StreamExists(StreamName stream, CancellationToken cancellationToken = default) {
         try {
-            // Check if any captured events exist for this stream by looking for blobs with the stream name prefix
+            // Try to read from Event Hubs with a shorter timeout first
+            // Events are immediately available in Event Hubs even before Capture writes them to blob storage
+            if (_useRealtimeReading) {
+                try {
+                    var streamEvents = await _consumer.ReadEventsFromStream(
+                        stream,
+                        EventPosition.Earliest,
+                        1, // Just check if any events exist
+                        TimeSpan.FromSeconds(5), // Longer timeout for Event Hubs propagation
+                        cancellationToken
+                    ).NoContext();
+
+                    if (streamEvents.Length > 0) {
+                        return true;
+                    }
+                } catch (OperationCanceledException) {
+                    // Timeout is expected, just fall through to blob check
+                    _logger?.LogDebug("Read timeout for stream {Stream}, checking blobs instead", stream);
+                } catch (Exception ex) {
+                    _logger?.LogDebug(ex, "Failed to read from Event Hubs for stream {Stream}, checking blobs", stream);
+                }
+            }
+
+            // Always check blob storage for captured events as fallback
+            // Note: Azure Event Hubs Capture writes events to blob storage asynchronously,
+            // so newly written events might not be immediately available here
             var containerClient = _blobServiceClient.GetBlobContainerClient(_captureContainerName);
             var blobPages = containerClient.GetBlobsAsync(prefix: GetBlobPrefix(stream), cancellationToken: cancellationToken)
-                .AsPages(pageSizeHint: 1);
+                .AsPages(pageSizeHint: 10); // Check more pages since we need to parse events from blobs
 
+            var foundEvents = new List<StreamEvent>();
             await foreach (var page in blobPages) {
-                if (page.Values.Any()) {
-                    return true;
+                foreach (var blobItem in page.Values) {
+                    var blobClient = containerClient.GetBlobClient(blobItem.Name);
+                    try {
+                        var streamEventsFromBlob = await ReadEventsFromBlob(blobClient, stream, cancellationToken).NoContext();
+                        if (streamEventsFromBlob.Any()) {
+                            return true; // Found events for this stream
+                        }
+                    } catch {
+                        // Ignore individual blob read errors
+                    }
                 }
-                break; // Only check the first page
+
+                // Limit how many blobs we check
+                if (foundEvents.Count > 0) break;
+                break; // Only check first page to avoid long operations
             }
 
             return false;
@@ -146,24 +207,17 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
         try {
             long? currentVersion = null;
 
-            // Handle NoStream case - check if stream exists
+            // Use version strategy to get current version and validate
+            currentVersion = await _versionStrategy.GetVersion(stream, cancellationToken).NoContext();
+
+            // Handle NoStream case
             if (expectedVersion == ExpectedStreamVersion.NoStream) {
-                // Check if we've already appended to this stream in this session (for immediate consistency)
-                if (_appendedStreams.Contains(stream.ToString())) {
+                if (currentVersion.HasValue) {
                     throw new AppendToStreamException(stream, new InvalidOperationException($"WrongExpectedVersion {-1}, stream already exists"));
                 }
-                // Also check blob storage in case stream was created in a previous session
-                var streamExists = await StreamExists(stream, cancellationToken).NoContext();
-                if (streamExists) {
-                    throw new AppendToStreamException(stream, new InvalidOperationException($"WrongExpectedVersion {-1}, stream already exists"));
-                }
-                // For NoStream, currentVersion should be null (doesn't exist)
-                currentVersion = null;
             }
             // Check expected version for optimistic concurrency (skip for Any)
             else if (expectedVersion != ExpectedStreamVersion.Any) {
-                currentVersion = await GetCurrentStreamVersion(stream, cancellationToken).NoContext();
-
                 // Expected version is a specific number (0, 1, 2, ...)
                 if (!currentVersion.HasValue) {
                     throw new AppendToStreamException(stream, new InvalidOperationException($"WrongExpectedVersion {expectedVersion.Value}, stream doesn't exist"));
@@ -171,10 +225,6 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
                 if (currentVersion.Value != expectedVersion.Value) {
                     throw new AppendToStreamException(stream, new InvalidOperationException($"WrongExpectedVersion {expectedVersion.Value}, current version {currentVersion.Value}"));
                 }
-            }
-            // For Any, we still need to get the current version to calculate next expected version
-            else {
-                currentVersion = await GetCurrentStreamVersion(stream, cancellationToken).NoContext();
             }
 
             var eventDataBatch = await _producerClient.CreateBatchAsync(cancellationToken).NoContext();
@@ -200,12 +250,12 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
                 await _producerClient.SendAsync(eventDataBatch, cancellationToken).NoContext();
             }
 
+            // Update version atomically using the strategy
+            var expectedVersionValue = expectedVersion == ExpectedStreamVersion.NoStream ? -1 : expectedVersion.Value;
+            var nextExpectedVersion = await _versionStrategy.IncrementVersion(stream, expectedVersionValue, events.Count, cancellationToken).NoContext();
+
             // Event Hubs doesn't provide a global position like EventStore, so we use a timestamp-based approach
             var globalPosition = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            var nextExpectedVersion = currentVersion.HasValue ? currentVersion.Value + events.Count : events.Count - 1;
-
-            // Track that we've appended to this stream (for NoStream checks)
-            _appendedStreams.Add(stream.ToString());
 
             return new AppendEventsResult(globalPosition, nextExpectedVersion);
         } catch (AppendToStreamException) {
@@ -500,7 +550,7 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
     /// Note: This is not atomic and may miss recent events, but it's the best we can do with Event Hubs
     /// Version is 0-indexed: 0 = first event, 1 = second event, etc.
     /// </summary>
-    async Task<long?> GetCurrentStreamVersion(StreamName stream, CancellationToken cancellationToken) {
+    internal async Task<long?> GetCurrentStreamVersion(StreamName stream, CancellationToken cancellationToken) {
         try {
             // Try to read from real-time first
             if (_useRealtimeReading) {

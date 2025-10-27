@@ -28,6 +28,18 @@ public class AzureEventHubsEventStoreOptions {
     public string TableStorageConnectionString { get; set; } = string.Empty;
 
     /// <summary>
+    /// Whether to enable atomic optimistic concurrency control
+    /// When enabled, uses Table Storage (if configured) or Blob Lease for atomic version checking
+    /// </summary>
+    public bool EnableAtomicVersioning { get; set; } = false;
+
+    /// <summary>
+    /// Blob container name for distributed locks when using Blob Lease version strategy
+    /// Only used when EnableAtomicVersioning is true and TableStorageConnectionString is not provided
+    /// </summary>
+    public string VersionLockContainerName { get; set; } = "eventuous-locks";
+
+    /// <summary>
     /// Blob container name where captured events are stored
     /// </summary>
     public string CaptureContainerName { get; set; } = string.Empty;
@@ -55,8 +67,8 @@ public class AzureEventHubsEventStoreOptions {
         if (string.IsNullOrWhiteSpace(BlobStorageConnectionString))
             throw new InvalidOperationException("BlobStorageConnectionString is required");
 
-        if (string.IsNullOrWhiteSpace(TableStorageConnectionString))
-            throw new InvalidOperationException("TableStorageConnectionString is required");
+        if (EnableAtomicVersioning && string.IsNullOrWhiteSpace(TableStorageConnectionString))
+            throw new InvalidOperationException("TableStorageConnectionString is required when EnableAtomicVersioning is true");
 
         if (string.IsNullOrWhiteSpace(CaptureContainerName))
             throw new InvalidOperationException("CaptureContainerName is required");
