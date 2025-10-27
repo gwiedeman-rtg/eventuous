@@ -142,6 +142,27 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
         }
 
         try {
+            // Check expected version for optimistic concurrency
+            var currentVersion = await GetCurrentStreamVersion(stream, cancellationToken).NoContext();
+
+            // Handle NoStream case
+            if (expectedVersion == ExpectedStreamVersion.NoStream) {
+                if (currentVersion.HasValue) {
+                    throw new AppendToStreamException(stream, new InvalidOperationException($"WrongExpectedVersion {-1}, stream already exists"));
+                }
+            }
+            // Handle Any case - always allow
+            else if (expectedVersion != ExpectedStreamVersion.Any && currentVersion.HasValue) {
+                // Stream exists, check version match
+                if (currentVersion.Value != expectedVersion.Value) {
+                    throw new AppendToStreamException(stream, new InvalidOperationException($"WrongExpectedVersion {expectedVersion.Value}, current version {currentVersion.Value}"));
+                }
+            }
+            // Handle case where we expect a stream to exist but it doesn't
+            else if (expectedVersion >= ExpectedStreamVersion.NoStream && !currentVersion.HasValue) {
+                throw new AppendToStreamException(stream, new InvalidOperationException($"WrongExpectedVersion {expectedVersion.Value}, stream doesn't exist"));
+            }
+
             var eventDataBatch = await _producerClient.CreateBatchAsync(cancellationToken).NoContext();
             var eventPosition = 0L;
 
@@ -167,9 +188,11 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
 
             // Event Hubs doesn't provide a global position like EventStore, so we use a timestamp-based approach
             var globalPosition = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            var nextExpectedVersion = expectedVersion.Value + events.Count;
+            var nextExpectedVersion = currentVersion.HasValue ? currentVersion.Value + events.Count : events.Count - 1;
 
             return new AppendEventsResult(globalPosition, nextExpectedVersion);
+        } catch (AppendToStreamException) {
+            throw;
         } catch (Exception ex) {
             _logger?.LogError(ex, "Failed to append {Count} events to stream {Stream}", events.Count, stream);
             throw new AppendToStreamException(stream, ex);
@@ -451,6 +474,57 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
             );
         } catch (Exception ex) {
             _logger?.LogWarning(ex, "Failed to parse captured event: {EventLine}", eventLine);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Gets the current version of the stream by reading events and counting them
+    /// Note: This is not atomic and may miss recent events, but it's the best we can do with Event Hubs
+    /// Version is 0-indexed: 0 = first event, 1 = second event, etc.
+    /// </summary>
+    async Task<long?> GetCurrentStreamVersion(StreamName stream, CancellationToken cancellationToken) {
+        try {
+            // Try to read from real-time first
+            if (_useRealtimeReading) {
+                try {
+                    var realtimeEvents = await _consumer.ReadEventsFromStream(
+                        stream,
+                        EventPosition.Earliest,
+                        1000,
+                        TimeSpan.FromSeconds(2),
+                        cancellationToken
+                    ).NoContext();
+
+                    if (realtimeEvents.Length > 0) {
+                        // Version is 0-indexed: 1 event → version 0
+                        return realtimeEvents.Length - 1;
+                    }
+                } catch (Exception ex) {
+                    _logger?.LogDebug(ex, "Failed to read real-time events for stream {Stream}, falling back to captured events", stream);
+                }
+            }
+
+            // Fallback to reading from captured events
+            var containerClient = _blobServiceClient.GetBlobContainerClient(_captureContainerName);
+            var blobPrefix = GetBlobPrefix(stream);
+            var blobs = containerClient.GetBlobsAsync(prefix: blobPrefix, cancellationToken: cancellationToken);
+
+            var allEvents = new List<StreamEvent>();
+            await foreach (var blobItem in blobs) {
+                var blobClient = containerClient.GetBlobClient(blobItem.Name);
+                var streamEvents = await ReadEventsFromBlob(blobClient, stream, cancellationToken).NoContext();
+                allEvents.AddRange(streamEvents);
+            }
+
+            if (allEvents.Count > 0) {
+                // Version is 0-indexed: 1 event → version 0
+                return allEvents.Count - 1;
+            }
+
+            return null;
+        } catch (Exception ex) {
+            _logger?.LogWarning(ex, "Failed to get current stream version for {Stream}", stream);
             return null;
         }
     }

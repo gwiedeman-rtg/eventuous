@@ -5,10 +5,13 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <OutputType>Exe</OutputType>
+    <IncludeTestHost>true</IncludeTestHost>
+    <IncludeTestHelpers>true</IncludeTestHelpers>
+    <IncludeSutApp>true</IncludeSutApp>
   </PropertyGroup>
 
   <ItemGroup>
-
     <PackageReference Include="Testcontainers.EventHubs" />
   </ItemGroup>
 
