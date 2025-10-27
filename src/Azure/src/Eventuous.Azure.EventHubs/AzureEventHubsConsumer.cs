@@ -112,6 +112,12 @@ public class AzureEventHubsConsumer : IDisposable {
                 )) {
                     if (partitionEvents.Count >= maxEvents) break;
 
+                    // Skip events with null Data (system events from emulator)
+                    if (partitionEvent.Data == null) {
+                        _logger?.LogTrace("Skipping event with null Data from partition {PartitionId}", partitionId);
+                        continue;
+                    }
+
                     var streamEvent = ConvertToStreamEvent(partitionEvent, stream);
                     if (streamEvent != null) {
                         partitionEvents.Add(streamEvent.Value);
@@ -185,6 +191,12 @@ public class AzureEventHubsConsumer : IDisposable {
                     combinedCts.Token
                 )) {
                     if (partitionEvents.Count >= maxEvents) break;
+
+                    // Skip events with null Data (system events from emulator)
+                    if (partitionEvent.Data == null) {
+                        _logger?.LogTrace("Skipping event with null Data from partition {PartitionId}", partitionId);
+                        continue;
+                    }
 
                     var streamEvent = ConvertToStreamEvent(partitionEvent);
                     if (streamEvent != null) {

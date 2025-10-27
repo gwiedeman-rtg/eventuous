@@ -301,7 +301,7 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
                         stream,
                         EventPosition.Earliest,
                         count,
-                        TimeSpan.FromSeconds(5),
+                        TimeSpan.FromSeconds(30), // Increased timeout to allow events to propagate
                         cancellationToken
                     ).NoContext();
 
@@ -415,12 +415,14 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     EventData ToEventData(NewStreamEvent streamEvent, StreamName stream) {
+        _logger?.LogInformation("ToEventData called for stream {Stream}, EventId={EventId}", stream, streamEvent.Id);
+
         var (eventType, contentType, payload) = _serializer.SerializeEvent(streamEvent.Payload!);
-        _logger?.LogDebug("Serialized event: Type={EventType}, ContentType={ContentType}, PayloadLength={Length}, Stream={Stream}",
+        _logger?.LogInformation("Serialized event: Type={EventType}, ContentType={ContentType}, PayloadLength={Length}, Stream={Stream}",
             eventType, contentType, payload.Length, stream);
 
         var metadata = _metaSerializer.Serialize(streamEvent.Metadata);
-        _logger?.LogDebug("Serialized metadata: Length={Length}", metadata.Length);
+        _logger?.LogInformation("Serialized metadata: Length={Length}", metadata.Length);
 
         var eventData = new EventData(payload) {
             MessageId = streamEvent.Id.ToString(),
@@ -435,7 +437,7 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
             eventData.Properties["Metadata"] = Convert.ToBase64String(metadata);
         }
 
-        _logger?.LogDebug("Created EventData: MessageId={MessageId}, BodyLength={BodyLength}, Properties={Properties}",
+        _logger?.LogInformation("Created EventData: MessageId={MessageId}, BodyLength={BodyLength}, Properties={Properties}",
             eventData.MessageId, eventData.EventBody.Length,
             string.Join(", ", eventData.Properties.Select(kvp => $"{kvp.Key}={kvp.Value}")));
 
