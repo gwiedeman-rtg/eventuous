@@ -23,6 +23,7 @@ public abstract class StoreFixtureBase {
 public abstract partial class StoreFixtureBase<TContainer>(LogLevel logLevel) : StoreFixtureBase, IStartableFixture where TContainer : DockerContainer {
     public virtual async Task InitializeAsync() {
         Container = CreateContainer();
+
         await Container.StartAsync();
 
         var services = new ServiceCollection();

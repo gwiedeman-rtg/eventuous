@@ -7,6 +7,9 @@ using Eventuous.Tests.Persistence.Base.Fixtures;
 using Eventuous.Tests.Azure.EventHubs.Integration.Fixtures;
 using Microsoft.Extensions.DependencyInjection;
 using Testcontainers.EventHubs;
+using DotNet.Testcontainers.Containers;
+using Testcontainers.Azurite;
+using DotNet.Testcontainers.Networks;
 
 namespace Eventuous.Tests.Azure.EventHubs.Integration.Store;
 
@@ -20,6 +23,10 @@ public class StoreFixture : StoreFixtureBase<Testcontainers.EventHubs.EventHubsC
     public string BlobStorageConnectionString { get; private set; } = null!;
     public string TableStorageConnectionString { get; private set; } = null!;
 
+    public AzuriteContainer? AzuriteContainer { get; private set; } = null;
+
+    public INetwork? Network { get; private set; } = null;
+
     public StoreFixture() : base(LogLevel.Information) { }
 
     protected override void SetupServices(IServiceCollection services) {
@@ -29,8 +36,9 @@ public class StoreFixture : StoreFixtureBase<Testcontainers.EventHubs.EventHubsC
         // NOTE: The Event Hubs emulator includes internal Azurite, but the ports may not be exposed.
         // For now, we use localhost endpoints assuming Azurite ports are mapped at the Docker level.
         // If these don't work, we may need to run a separate Azurite container or disable blob capture tests.
-        BlobStorageConnectionString = "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;";
-        TableStorageConnectionString = "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;TableEndpoint=http://127.0.0.1:10002/devstoreaccount1;";
+        
+        BlobStorageConnectionString = $"DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:{AzuriteContainer.GetMappedPublicPort(10000)}/devstoreaccount1;";
+        TableStorageConnectionString = $"DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;TableEndpoint=http://127.0.0.1:{AzuriteContainer.GetMappedPublicPort(10002)}/devstoreaccount1;";
 
         // Add Azure Event Hubs Event Store
         // Note: Atomic versioning is disabled by default to avoid requiring Table Storage for tests
@@ -51,9 +59,12 @@ public class StoreFixture : StoreFixtureBase<Testcontainers.EventHubs.EventHubsC
 
     protected override Testcontainers.EventHubs.EventHubsContainer CreateContainer()
     {
+        Network = EventHubsContainerBuilder.CreateNetwork();
 
+        AzuriteContainer = EventHubsContainerBuilder.CreateAzurite().WithNetwork(Network).WithNetworkAliases("evhub").Build();
 
-        return EventHubsContainerBuilder.CreateBuilder().Build();
+        return EventHubsContainerBuilder.CreateBuilder().WithAzuriteContainer(Network, AzuriteContainer, "evhub").Build();
     }
 
+    
 }
