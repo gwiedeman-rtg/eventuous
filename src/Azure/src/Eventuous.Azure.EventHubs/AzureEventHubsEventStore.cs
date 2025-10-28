@@ -145,7 +145,7 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
                         stream,
                         EventPosition.Earliest,
                         1, // Just check if any events exist
-                        TimeSpan.FromSeconds(5), // Longer timeout for Event Hubs propagation
+                        TimeSpan.FromSeconds(30), // Increased timeout to allow events to propagate
                         cancellationToken
                     ).NoContext();
 

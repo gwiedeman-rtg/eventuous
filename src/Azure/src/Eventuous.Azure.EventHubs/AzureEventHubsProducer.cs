@@ -10,7 +10,7 @@ namespace Eventuous.Azure.EventHubs;
 /// <summary>
 /// Azure Event Hubs producer implementation
 /// </summary>
-public class AzureEventHubsProducer : IProducer<AzureEventHubsProduceOptions>, IDisposable {
+public class AzureEventHubsProducer : IProducer<AzureEventHubsProduceOptions>, IAsyncDisposable {
     readonly EventHubProducerClient           _producerClient;
     readonly IEventSerializer                 _serializer;
     readonly IMetadataSerializer              _metaSerializer;
@@ -67,29 +67,41 @@ public class AzureEventHubsProducer : IProducer<AzureEventHubsProduceOptions>, I
             AzureEventHubsProduceOptions?  options,
             CancellationToken              cancellationToken = default
         ) {
+        cancellationToken.ThrowIfCancellationRequested();
+
         var messageList = messages.ToList();
         if (!messageList.Any()) return;
 
+        var partitionKey = options?.PartitionKey ?? stream.ToString();
+        var batchCount = 0;
+
         try {
+            // Pre-validate that all messages can fit in batches
+            await ValidateMessageSizes(messageList, stream, options, partitionKey, cancellationToken).NoContext();
+
             var eventDataBatch = await _producerClient.CreateBatchAsync(
-                new CreateBatchOptions { PartitionKey = options?.PartitionKey ?? stream.ToString() },
+                new CreateBatchOptions { PartitionKey = partitionKey },
                 cancellationToken
             ).NoContext();
 
             foreach (var message in messageList) {
+                cancellationToken.ThrowIfCancellationRequested();
+
                 var eventData = ToEventData(message, stream, options);
 
                 if (!eventDataBatch.TryAdd(eventData)) {
                     // If the batch is full, send it and create a new batch
                     await _producerClient.SendAsync(eventDataBatch, cancellationToken).NoContext();
+                    batchCount++;
+
                     eventDataBatch = await _producerClient.CreateBatchAsync(
-                        new CreateBatchOptions { PartitionKey = options?.PartitionKey ?? stream.ToString() },
+                        new CreateBatchOptions { PartitionKey = partitionKey },
                         cancellationToken
                     ).NoContext();
 
                     if (!eventDataBatch.TryAdd(eventData)) {
-                        await message.Nack<AzureEventHubsProducer>("Event is too large to fit in a batch", null).NoContext();
-                        continue;
+                        // This should not happen after pre-validation, but handle gracefully
+                        throw new InvalidOperationException($"Event is too large to fit in a batch after validation");
                     }
                 }
             }
@@ -97,14 +109,28 @@ public class AzureEventHubsProducer : IProducer<AzureEventHubsProduceOptions>, I
             // Send the final batch
             if (eventDataBatch.Count > 0) {
                 await _producerClient.SendAsync(eventDataBatch, cancellationToken).NoContext();
+                batchCount++;
             }
+
+            _logger?.LogDebug("Successfully produced {Count} messages to stream {Stream} in {BatchCount} batches with partition key {PartitionKey}",
+                messageList.Count, stream, batchCount, partitionKey);
 
             // Acknowledge all messages
             foreach (var message in messageList) {
                 await message.Ack<AzureEventHubsProducer>().NoContext();
             }
+        } catch (OperationCanceledException) {
+            _logger?.LogWarning("Produce operation cancelled for {Count} messages to stream {Stream}", messageList.Count, stream);
+
+            // NACK all messages on cancellation
+            foreach (var message in messageList) {
+                await message.Nack<AzureEventHubsProducer>($"Produce operation cancelled for stream {stream}", null).NoContext();
+            }
+
+            throw;
         } catch (Exception ex) {
-            _logger?.LogError(ex, "Failed to produce {Count} messages to stream {Stream}", messageList.Count, stream);
+            _logger?.LogError(ex, "Failed to produce {Count} messages to stream {Stream} with partition key {PartitionKey} in {BatchCount} batches",
+                messageList.Count, stream, partitionKey, batchCount);
 
             // NACK all messages
             foreach (var message in messageList) {
@@ -112,6 +138,30 @@ public class AzureEventHubsProducer : IProducer<AzureEventHubsProduceOptions>, I
             }
 
             throw;
+        }
+    }
+
+    async Task ValidateMessageSizes(
+        IList<ProducedMessage> messages,
+        StreamName stream,
+        AzureEventHubsProduceOptions? options,
+        string partitionKey,
+        CancellationToken cancellationToken) {
+        // Create a test batch to validate message sizes
+        var testBatch = await _producerClient.CreateBatchAsync(
+            new CreateBatchOptions { PartitionKey = partitionKey },
+            cancellationToken
+        ).NoContext();
+
+        foreach (var message in messages) {
+            var eventData = ToEventData(message, stream, options);
+
+            if (!testBatch.TryAdd(eventData)) {
+                // Message is too large for an empty batch
+                throw new InvalidOperationException(
+                    $"Message {message.MessageId} is too large to fit in an Event Hubs batch. " +
+                    $"Consider reducing message size or splitting into smaller messages.");
+            }
         }
     }
 
@@ -157,8 +207,11 @@ public class AzureEventHubsProducer : IProducer<AzureEventHubsProduceOptions>, I
         return eventData;
     }
 
-    public void Dispose() {
-        _producerClient?.DisposeAsync().AsTask().Wait();
+    public async ValueTask DisposeAsync() {
+        if (_producerClient != null) {
+            await _producerClient.DisposeAsync().ConfigureAwait(false);
+        }
+        GC.SuppressFinalize(this);
     }
 }
 
