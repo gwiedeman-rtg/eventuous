@@ -215,11 +215,23 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
                 currentVersion = null;
             }
 
-            // Handle NoStream case - need to check if stream exists
+            // Handle NoStream case - use version strategy to check if stream exists
             if (expectedVersion == ExpectedStreamVersion.NoStream) {
-                var streamExists = await StreamExists(stream, cancellationToken).NoContext();
-                if (streamExists) {
-                    throw new AppendToStreamException(stream, new InvalidOperationException($"WrongExpectedVersion {-1}, stream already exists"));
+                // For atomic versioning strategies (TableStorage, BlobLease), use GetVersion to check if stream exists
+                // For non-atomic strategies, fall back to StreamExists
+                if (_versionStrategy is TableStorageVersionStrategy || _versionStrategy is BlobLeaseVersionStrategy) {
+                    var streamVersion = await _versionStrategy.GetVersion(stream, cancellationToken).NoContext();
+                    // If GetVersion returns a value >= 0, the stream exists and we should throw
+                    // If it returns null or -1, the stream doesn't exist and we can proceed
+                    if (streamVersion.HasValue && streamVersion.Value >= 0) {
+                        throw new AppendToStreamException(stream, new InvalidOperationException($"WrongExpectedVersion {-1}, stream already exists"));
+                    }
+                } else {
+                    // For NonAtomicVersionStrategy, use the unreliable StreamExists method
+                    var streamExists = await StreamExists(stream, cancellationToken).NoContext();
+                    if (streamExists) {
+                        throw new AppendToStreamException(stream, new InvalidOperationException($"WrongExpectedVersion {-1}, stream already exists"));
+                    }
                 }
             }
             // Check expected version for optimistic concurrency (skip for Any)
