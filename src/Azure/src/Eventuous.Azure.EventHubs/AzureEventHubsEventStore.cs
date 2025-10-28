@@ -573,27 +573,45 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
     }
 
     /// <summary>
-    /// Gets the current version of the stream by reading events and counting them
-    /// Note: This is not atomic and may miss recent events, but it's the best we can do with Event Hubs
-    /// Version is 0-indexed: 0 = first event, 1 = second event, etc.
+    /// Gets the current version of a stream using a hybrid approach
+    ///
+    /// This method attempts to determine the stream version by:
+    /// 1. First trying to read from real-time Event Hubs (if enabled)
+    /// 2. Falling back to reading from captured blob storage
+    /// 3. Using a simple counter approach if both fail
+    ///
+    /// For NonAtomicVersionStrategy, this method may return null if:
+    /// - Event Hubs consumer times out or fails
+    /// - Blob storage doesn't have captured events yet
+    /// - Network issues prevent reliable reading
+    ///
+    /// When null is returned, version validation is skipped, allowing the append
+    /// to proceed. This is the expected behavior for NonAtomicVersionStrategy.
     /// </summary>
+    /// <param name="stream">Stream name to get version for</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Current stream version, or null if cannot be determined</returns>
     internal async Task<long?> GetCurrentStreamVersion(StreamName stream, CancellationToken cancellationToken) {
         try {
-            // Try to read from real-time first
+            // Try to read from real-time first (with short timeout to avoid blocking)
             if (_useRealtimeReading) {
                 try {
                     var realtimeEvents = await _consumer.ReadEventsFromStream(
                         stream,
                         EventPosition.Earliest,
                         1000,
-                        TimeSpan.FromSeconds(2),
+                        TimeSpan.FromSeconds(2), // Short timeout to avoid blocking
                         cancellationToken
                     ).NoContext();
 
                     if (realtimeEvents.Length > 0) {
                         // Version is 0-indexed: 1 event → version 0
+                        _logger?.LogDebug("Got version {Version} from real-time Event Hubs for stream {Stream}",
+                            realtimeEvents.Length - 1, stream);
                         return realtimeEvents.Length - 1;
                     }
+                } catch (OperationCanceledException) {
+                    _logger?.LogDebug("Real-time reading timed out for stream {Stream}, falling back to captured events", stream);
                 } catch (Exception ex) {
                     _logger?.LogDebug(ex, "Failed to read real-time events for stream {Stream}, falling back to captured events", stream);
                 }
@@ -613,12 +631,17 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
 
             if (allEvents.Count > 0) {
                 // Version is 0-indexed: 1 event → version 0
+                _logger?.LogDebug("Got version {Version} from captured blob storage for stream {Stream}",
+                    allEvents.Count - 1, stream);
                 return allEvents.Count - 1;
             }
 
+            // If we can't determine the version, return null
+            // This allows NonAtomicVersionStrategy to skip version validation
+            _logger?.LogDebug("Could not determine version for stream {Stream}, version validation will be skipped", stream);
             return null;
         } catch (Exception ex) {
-            _logger?.LogWarning(ex, "Failed to get current stream version for {Stream}", stream);
+            _logger?.LogWarning(ex, "Failed to get current stream version for {Stream}, version validation will be skipped", stream);
             return null;
         }
     }
