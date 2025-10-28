@@ -84,7 +84,7 @@ public class AzureEventHubsConsumer : IDisposable {
             CancellationToken cancellationToken = default
         ) {
         var events = new List<StreamEvent>();
-        var readTimeout = timeout ?? TimeSpan.FromSeconds(180);
+        var readTimeout = timeout ?? TimeSpan.FromSeconds(10);
 
         try {
             using var combinedCts = CancellationTokenSource.CreateLinkedTokenSource(
@@ -92,10 +92,10 @@ public class AzureEventHubsConsumer : IDisposable {
                 _cancellationTokenSource.Token
             );
 
-            //combinedCts.CancelAfter(readTimeout);
+            combinedCts.CancelAfter(readTimeout);
 
             var readOptions = new ReadEventOptions {
-                //MaximumWaitTime = TimeSpan.FromSeconds(10)
+                MaximumWaitTime = TimeSpan.FromSeconds(1)
             };
 
             // Read from all partitions to find events for this stream
