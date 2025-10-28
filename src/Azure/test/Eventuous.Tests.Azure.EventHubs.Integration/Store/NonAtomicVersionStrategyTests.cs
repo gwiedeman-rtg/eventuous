@@ -55,4 +55,5 @@ public class NonAtomicVersionStrategyTests : StoreAppendTests<NonAtomicVersionSt
     // - When version detection fails, validation is skipped and appends succeed
     // - This creates race conditions but provides better performance
     // - Use atomic versioning strategies for production scenarios requiring strict consistency
+
 }

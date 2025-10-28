@@ -50,4 +50,10 @@ public class BlobLeaseVersionStrategyTests : StoreAppendTests<BlobLeaseVersionSt
     //
     // For BlobLeaseVersionStrategy, all tests should pass reliably due to atomic operations
     // using Azure Blob Lease for distributed locking during version checks.
+
+    /// <summary>
+    /// Explicit cleanup to ensure containers are disposed properly
+    /// </summary>
+
+
 }

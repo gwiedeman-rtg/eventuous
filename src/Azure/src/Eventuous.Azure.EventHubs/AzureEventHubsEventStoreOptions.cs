@@ -67,8 +67,10 @@ public class AzureEventHubsEventStoreOptions {
         if (string.IsNullOrWhiteSpace(BlobStorageConnectionString))
             throw new InvalidOperationException("BlobStorageConnectionString is required");
 
-        if (EnableAtomicVersioning && string.IsNullOrWhiteSpace(TableStorageConnectionString))
-            throw new InvalidOperationException("TableStorageConnectionString is required when EnableAtomicVersioning is true");
+        // Note: When EnableAtomicVersioning is true, we can use either:
+        // 1. TableStorageConnectionString for TableStorageVersionStrategy
+        // 2. BlobStorageConnectionString for BlobLeaseVersionStrategy (fallback)
+        // Since BlobStorageConnectionString is always required, we don't need additional validation here
 
         if (string.IsNullOrWhiteSpace(CaptureContainerName))
             throw new InvalidOperationException("CaptureContainerName is required");

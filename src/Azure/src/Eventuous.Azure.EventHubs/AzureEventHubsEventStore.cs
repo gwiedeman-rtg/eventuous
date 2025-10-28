@@ -129,7 +129,7 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
             metaSerializer,
             logger,
             null, // loggerFactory
-            !string.IsNullOrWhiteSpace(tableStorageConnectionString) ? new TableServiceClient(tableStorageConnectionString) : null,
+            !string.IsNullOrWhiteSpace(tableStorageConnectionString) ? new TableServiceClient(tableStorageConnectionString, new TableClientOptions()) : null,
             enableAtomicVersioning,
             versionLockContainer
         ) { }

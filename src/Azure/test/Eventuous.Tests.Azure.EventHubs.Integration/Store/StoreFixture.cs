@@ -19,7 +19,7 @@ namespace Eventuous.Tests.Azure.EventHubs.Integration.Store;
 /// Uses Event Hubs Emulator with internal Azurite for blob/table storage
 /// Follows the Postgres pattern with StoreFixtureBase<TContainer>
 /// </summary>
-public class StoreFixture : StoreFixtureBase<Testcontainers.EventHubs.EventHubsContainer> {
+public class StoreFixture : StoreFixtureBase<Testcontainers.EventHubs.EventHubsContainer>, IAsyncDisposable {
     public string EventHubConnectionString { get; private set; } = null!;
     public string BlobStorageConnectionString { get; private set; } = null!;
     public string TableStorageConnectionString { get; private set; } = null!;
@@ -67,5 +67,14 @@ public class StoreFixture : StoreFixtureBase<Testcontainers.EventHubs.EventHubsC
         return EventHubsContainerBuilder.CreateBuilder().WithAzuriteContainer(Network, AzuriteContainer, "evhub").Build();
     }
 
+    public override async ValueTask DisposeAsync() {
+        if (AzuriteContainer != null)
+            await AzuriteContainer.DisposeAsync();
+
+        if (Network != null)
+            await Network.DisposeAsync();
+
+        await base.DisposeAsync();
+    }
 
 }

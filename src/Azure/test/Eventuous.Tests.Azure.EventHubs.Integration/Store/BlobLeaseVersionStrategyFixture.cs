@@ -66,5 +66,14 @@ public class BlobLeaseVersionStrategyFixture : StoreFixtureBase<Testcontainers.E
         return EventHubsContainerBuilder.CreateBuilder().WithAzuriteContainer(Network, AzuriteContainer, "evhub").Build();
     }
 
+    public override async ValueTask DisposeAsync() {
+        if (AzuriteContainer != null)
+            await AzuriteContainer.DisposeAsync();
+
+        if (Network != null)
+            await Network.DisposeAsync();
+
+        await base.DisposeAsync();
+    }
 
 }

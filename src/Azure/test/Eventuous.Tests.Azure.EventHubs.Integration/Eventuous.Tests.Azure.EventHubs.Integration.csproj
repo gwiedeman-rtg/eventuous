@@ -1,23 +1,10 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
-
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-    <IsPackable>false</IsPackable>
-    <OutputType>Exe</OutputType>
     <IncludeTestHost>true</IncludeTestHost>
     <IncludeTestHelpers>true</IncludeTestHelpers>
     <IncludeSutApp>true</IncludeSutApp>
-    <IsTestProject>false</IsTestProject>
+    <OutputType>Exe</OutputType>
   </PropertyGroup>
-
-  <ItemGroup>
-    <PackageReference Include="Testcontainers.EventHubs" />
-    <PackageReference Include="TUnit.Core" />
-    <PackageReference Include="TUnit.Assertions" />
-  </ItemGroup>
-
   <ItemGroup>
     <ProjectReference Include="$(LocalRoot)\Eventuous.Azure.EventHubs\Eventuous.Azure.EventHubs.csproj" />
     <ProjectReference Include="$(DiagRoot)\Eventuous.Diagnostics.OpenTelemetry\Eventuous.Diagnostics.OpenTelemetry.csproj"/>
@@ -26,10 +13,8 @@
     <ProjectReference Include="$(CoreTestRoot)\Eventuous.Tests.Persistence.Base\Eventuous.Tests.Persistence.Base.csproj"/>
     <ProjectReference Include="$(SrcRoot)\Diagnostics\test\Eventuous.Tests.OpenTelemetry\Eventuous.Tests.OpenTelemetry.csproj"/>
     <ProjectReference Include="$(CoreTestRoot)\Eventuous.Tests.Subscriptions.Base\Eventuous.Tests.Subscriptions.Base.csproj"/>
-    <ProjectReference Include="$(RepoRoot)\test\Eventuous.TestHelpers.TUnit\Eventuous.TestHelpers.TUnit.csproj" />
   </ItemGroup>
-
   <ItemGroup>
+    <PackageReference Include="Testcontainers.EventHubs" />
   </ItemGroup>
-
 </Project>

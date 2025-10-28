@@ -48,7 +48,7 @@ public static class EventHubsContainerBuilder {
     /// <returns>Configured AzuriteContainer</returns>
     public static AzuriteBuilder CreateAzurite()
         => new AzuriteBuilder()
-            .WithImage("mcr.microsoft.com/azure-storage/azurite:3.33.0")
+            .WithImage("mcr.microsoft.com/azure-storage/azurite:latest")
             .WithExposedPort(10000)
             .WithExposedPort(10001)
             .WithExposedPort(10002);

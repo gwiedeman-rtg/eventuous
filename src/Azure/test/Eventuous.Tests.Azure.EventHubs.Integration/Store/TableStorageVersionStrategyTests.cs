@@ -50,4 +50,5 @@ public class TableStorageVersionStrategyTests : StoreAppendTests<TableStorageVer
     //
     // For TableStorageVersionStrategy, all tests should pass reliably due to atomic operations
     // using Azure Table Storage with ETag-based conditional updates.
+
 }
