@@ -32,8 +32,8 @@ public static class ServiceCollectionExtensions {
         ) {
         services.Configure(configureOptions);
 
-        // Register TableServiceClient if atomic versioning is enabled and table storage is configured
-        services.AddSingleton<TableServiceClient>(serviceProvider => {
+        // Register TableServiceClient conditionally if atomic versioning is enabled and table storage is configured
+        services.AddSingleton(serviceProvider => {
             var options = serviceProvider.GetRequiredService<IOptions<AzureEventHubsEventStoreOptions>>().Value;
             if (options.EnableAtomicVersioning && !string.IsNullOrWhiteSpace(options.TableStorageConnectionString)) {
                 return new TableServiceClient(options.TableStorageConnectionString);

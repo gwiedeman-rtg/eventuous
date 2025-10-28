@@ -6,7 +6,9 @@ using Eventuous.Azure.EventHubs.Extensions;
 using Eventuous.Tests.Persistence.Base.Fixtures;
 using Eventuous.Tests.Azure.EventHubs.Integration.Fixtures;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Testcontainers.EventHubs;
+using DotNet.Testcontainers.Containers;
 using Testcontainers.Azurite;
 using DotNet.Testcontainers.Networks;
 
@@ -14,18 +16,8 @@ namespace Eventuous.Tests.Azure.EventHubs.Integration.Store;
 
 /// <summary>
 /// Test fixture for Azure Event Hubs integration tests using BlobLeaseVersionStrategy
-///
-/// This fixture tests the BlobLeaseVersionStrategy which:
-/// - Uses Azure Blob Lease for distributed locking during version checks
-/// - Provides strong consistency guarantees without requiring Table Storage
-/// - Uses blob leases to prevent concurrent modifications
-/// - Requires Azure Blob Storage service
-///
-/// Use this fixture to test scenarios where:
-/// - Strong consistency is required
-/// - Azure Table Storage is not available
-/// - Azure Blob Storage is available
-/// - Distributed locking via blob leases is acceptable
+/// Uses Event Hubs Emulator with internal Azurite for blob/table storage
+/// Follows the Postgres pattern with StoreFixtureBase<TContainer>
 /// </summary>
 public class BlobLeaseVersionStrategyFixture : StoreFixtureBase<Testcontainers.EventHubs.EventHubsContainer> {
     public string EventHubConnectionString { get; private set; } = null!;
@@ -33,6 +25,7 @@ public class BlobLeaseVersionStrategyFixture : StoreFixtureBase<Testcontainers.E
     public string TableStorageConnectionString { get; private set; } = null!;
 
     public AzuriteContainer? AzuriteContainer { get; private set; } = null;
+
     public INetwork? Network { get; private set; } = null;
 
     public BlobLeaseVersionStrategyFixture() : base(LogLevel.Information) { }
@@ -41,11 +34,14 @@ public class BlobLeaseVersionStrategyFixture : StoreFixtureBase<Testcontainers.E
         // Get connection string from container (base class provides Container property)
         EventHubConnectionString = Container.GetConnectionString();
 
-        // Configure Azurite for blob storage (Event Hubs Capture) and table storage
-        BlobStorageConnectionString = $"DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:{AzuriteContainer?.GetMappedPublicPort(10000) ?? 10000}/devstoreaccount1;";
-        TableStorageConnectionString = $"DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;TableEndpoint=http://127.0.0.1:{AzuriteContainer?.GetMappedPublicPort(10002) ?? 10002}/devstoreaccount1;";
+        // NOTE: The Event Hubs emulator includes internal Azurite, but the ports may not be exposed.
+        // For now, we use localhost endpoints assuming Azurite ports are mapped at the Docker level.
+        // If these don't work, we may need to run a separate Azurite container or disable blob capture tests.
 
-        // Configure Azure Event Hubs Event Store with BlobLeaseVersionStrategy
+        BlobStorageConnectionString = $"DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:{AzuriteContainer.GetMappedPublicPort(10000)}/devstoreaccount1;";
+        TableStorageConnectionString = $"DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;TableEndpoint=http://127.0.0.1:{AzuriteContainer.GetMappedPublicPort(10002)}/devstoreaccount1;";
+
+        // Add Azure Event Hubs Event Store with BlobLeaseVersionStrategy
         services.AddAzureEventHubsEventStore(options => {
             options.EventHubConnectionString = EventHubConnectionString;
             options.EventHubName = "test-hub";
@@ -54,50 +50,21 @@ public class BlobLeaseVersionStrategyFixture : StoreFixtureBase<Testcontainers.E
             options.TableStorageConnectionString = null; // CRITICAL: Set to null to force BlobLeaseVersionStrategy
             options.ConsumerGroup = "$Default";
             options.UseRealtimeReading = true;
-
-            // CRITICAL: Enable atomic versioning without Table Storage
-            // This forces the use of BlobLeaseVersionStrategy which uses blob leases
-            // for distributed locking during version checks
-            options.EnableAtomicVersioning = true;
+            options.EnableAtomicVersioning = true; // Enable atomic versioning for BlobLeaseVersionStrategy
         });
 
         // Register the EventStore service - base class will automatically set EventStore property
-        services.AddEventStore<AzureEventHubsEventStore>();
+        //services.AddEventStore<AzureEventHubsEventStore>();
     }
 
-    protected override Testcontainers.EventHubs.EventHubsContainer CreateContainer() {
-        // Create network for Event Hubs and Azurite containers
+    protected override Testcontainers.EventHubs.EventHubsContainer CreateContainer()
+    {
         Network = EventHubsContainerBuilder.CreateNetwork();
 
-        // Create Azurite container for blob storage
-        AzuriteContainer = new AzuriteBuilder()
-            .WithNetwork(Network)
-            .WithPortBinding(10000, 10000) // Blob service
-            .WithPortBinding(10001, 10001) // Queue service
-            .WithPortBinding(10002, 10002) // Table service
-            .Build();
+        AzuriteContainer = EventHubsContainerBuilder.CreateAzurite().WithNetwork(Network).WithNetworkAliases("evhub").Build();
 
-        // Create Event Hubs container
-        return EventHubsContainerBuilder.CreateBuilder()
-            .WithNetwork(Network)
-            .WithPortBinding(9093, 9093)
-            .Build();
+        return EventHubsContainerBuilder.CreateBuilder().WithAzuriteContainer(Network, AzuriteContainer, "evhub").Build();
     }
 
-    public override async Task InitializeAsync() {
-        // Start Azurite first
-        await AzuriteContainer!.StartAsync();
 
-        // Start Event Hubs
-        await base.InitializeAsync();
-    }
-
-    public override async ValueTask DisposeAsync() {
-        await base.DisposeAsync();
-        if (AzuriteContainer != null) {
-            await AzuriteContainer.DisposeAsync();
-        }
-        // Note: INetwork doesn't implement IDisposable, so we can't dispose it
-        // The network will be cleaned up when the containers are disposed
-    }
 }
