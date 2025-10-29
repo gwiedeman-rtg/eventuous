@@ -53,9 +53,11 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
     /// <param name="metaSerializer">Optional metadata serializer. When not provided, the default serializer will be used.</param>
     /// <param name="logger">Optional logger</param>
     /// <param name="loggerFactory"></param>
+    /// <param name="versionStrategy">Version strategy instance. If not provided, will be created based on other parameters.</param>
+    /// <param name="versionStrategyFactory">Optional factory for creating version strategy. Used if versionStrategy is null.</param>
     /// <param name="tableServiceClient">Optional table service client for atomic versioning</param>
-    /// <param name="enableAtomicVersioning">Whether to enable atomic version control</param>
-    /// <param name="versionLockContainer">Container name for blob lease versioning</param>
+    /// <param name="enableAtomicVersioning">Whether to enable atomic version control (used if versionStrategy is null)</param>
+    /// <param name="versionLockContainer">Container name for blob lease versioning (used if versionStrategy is null)</param>
     public AzureEventHubsEventStore(
             EventHubProducerClient              producerClient,
             EventHubConsumerClient              consumerClient,
@@ -67,6 +69,8 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
             IMetadataSerializer?                metaSerializer = null,
             ILogger<AzureEventHubsEventStore>?  logger         = null,
             ILoggerFactory?                     loggerFactory = null,
+            IStreamVersionStrategy?             versionStrategy = null,
+            IVersionStrategyFactory?            versionStrategyFactory = null,
             TableServiceClient?                 tableServiceClient = null,
             bool                                enableAtomicVersioning = false,
             string?                             versionLockContainer = null
@@ -82,12 +86,27 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
         _loggerFactory        = loggerFactory;
         _consumer             = new AzureEventHubsConsumer(consumerClient, serializer, metaSerializer, loggerFactory?.CreateLogger<AzureEventHubsConsumer>());
 
-        // Initialize version strategy based on configuration
-        _versionStrategy = enableAtomicVersioning
-            ? (tableServiceClient != null
+        // Initialize version strategy - prefer injected strategy, then factory, then create based on configuration
+        // Note: For NonAtomicVersionStrategy, we need to pass 'this', so we do it after all fields are initialized
+        if (versionStrategy != null) {
+            _versionStrategy = versionStrategy;
+        } else if (versionStrategyFactory != null) {
+            _versionStrategy = versionStrategyFactory.CreateVersionStrategy(new VersionStrategyContext {
+                EventStore = this,
+                TableServiceClient = tableServiceClient,
+                BlobServiceClient = blobServiceClient,
+                VersionLockContainerName = versionLockContainer,
+                EnableAtomicVersioning = enableAtomicVersioning,
+                LoggerFactory = loggerFactory
+            });
+        } else if (enableAtomicVersioning) {
+            _versionStrategy = tableServiceClient != null
                 ? new TableStorageVersionStrategy(tableServiceClient, loggerFactory?.CreateLogger<TableStorageVersionStrategy>())
-                : new BlobLeaseVersionStrategy(blobServiceClient, versionLockContainer ?? "eventuous-locks", loggerFactory?.CreateLogger<BlobLeaseVersionStrategy>()))
-            : new NonAtomicVersionStrategy(this, loggerFactory?.CreateLogger<NonAtomicVersionStrategy>());
+                : new BlobLeaseVersionStrategy(blobServiceClient, versionLockContainer ?? "eventuous-locks", loggerFactory?.CreateLogger<BlobLeaseVersionStrategy>());
+        } else {
+            // NonAtomicVersionStrategy requires 'this' reference, which is now fully initialized
+            _versionStrategy = new NonAtomicVersionStrategy(this, loggerFactory?.CreateLogger<NonAtomicVersionStrategy>());
+        }
     }
 
     /// <summary>
@@ -102,9 +121,12 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
     /// <param name="serializer">Optional event serializer. When not provided, the default serializer will be used.</param>
     /// <param name="metaSerializer">Optional metadata serializer. When not provided, the default serializer will be used.</param>
     /// <param name="logger">Optional logger</param>
+    /// <param name="loggerFactory">Optional logger factory</param>
+    /// <param name="versionStrategy">Optional version strategy instance</param>
+    /// <param name="versionStrategyFactory">Optional factory for creating version strategy</param>
     /// <param name="tableStorageConnectionString">Optional table storage connection string for atomic versioning</param>
-    /// <param name="enableAtomicVersioning">Whether to enable atomic version control</param>
-    /// <param name="versionLockContainer">Container name for blob lease versioning</param>
+    /// <param name="enableAtomicVersioning">Whether to enable atomic version control (used if versionStrategy is null)</param>
+    /// <param name="versionLockContainer">Container name for blob lease versioning (used if versionStrategy is null)</param>
     public AzureEventHubsEventStore(
             string                              eventHubConnectionString,
             string                              eventHubName,
@@ -115,6 +137,9 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
             IEventSerializer?                   serializer     = null,
             IMetadataSerializer?                metaSerializer = null,
             ILogger<AzureEventHubsEventStore>?  logger         = null,
+            ILoggerFactory?                     loggerFactory = null,
+            IStreamVersionStrategy?             versionStrategy = null,
+            IVersionStrategyFactory?            versionStrategyFactory = null,
             string?                             tableStorageConnectionString = null,
             bool                                enableAtomicVersioning = false,
             string?                             versionLockContainer = null
@@ -128,7 +153,9 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
             serializer,
             metaSerializer,
             logger,
-            null, // loggerFactory
+            loggerFactory,
+            versionStrategy,
+            versionStrategyFactory,
             !string.IsNullOrWhiteSpace(tableStorageConnectionString) ? new TableServiceClient(tableStorageConnectionString, new TableClientOptions()) : null,
             enableAtomicVersioning,
             versionLockContainer

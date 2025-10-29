@@ -2,12 +2,14 @@
 // Licensed under the Apache License, Version 2.0.
 
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Eventuous.Producers;
 using Eventuous.Subscriptions;
 using Eventuous.Subscriptions.Checkpoints;
 using Eventuous.Subscriptions.Filters;
 using Eventuous.Azure.EventHubs.Subscriptions;
+using Eventuous.Azure.EventHubs.Versioning;
 using Azure.Data.Tables;
 using Azure.Storage.Blobs;
 using Azure.Messaging.EventHubs.Producer;
@@ -32,6 +34,9 @@ public static class ServiceCollectionExtensions {
         ) {
         services.Configure(configureOptions);
 
+        // Register default version strategy factory if not already registered
+        services.TryAddSingleton<IVersionStrategyFactory, DefaultVersionStrategyFactory>();
+
         // Register TableServiceClient conditionally if atomic versioning is enabled and table storage is configured
         services.AddSingleton(serviceProvider => {
             var options = serviceProvider.GetRequiredService<IOptions<AzureEventHubsEventStoreOptions>>().Value;
@@ -51,6 +56,10 @@ public static class ServiceCollectionExtensions {
             var loggerFactory = serviceProvider.GetService<ILoggerFactory>();
             var tableServiceClient = serviceProvider.GetService<TableServiceClient>();
 
+            // Try to get injected version strategy or factory
+            var versionStrategy = serviceProvider.GetService<IStreamVersionStrategy>();
+            var versionStrategyFactory = serviceProvider.GetService<IVersionStrategyFactory>();
+
             return new AzureEventHubsEventStore(
                 new EventHubProducerClient(options.EventHubConnectionString, options.EventHubName),
                 new EventHubConsumerClient(options.ConsumerGroup, options.EventHubConnectionString, options.EventHubName),
@@ -62,6 +71,8 @@ public static class ServiceCollectionExtensions {
                 metaSerializer,
                 logger,
                 loggerFactory,
+                versionStrategy,
+                versionStrategyFactory,
                 tableServiceClient,
                 options.EnableAtomicVersioning,
                 options.VersionLockContainerName
@@ -97,11 +108,18 @@ public static class ServiceCollectionExtensions {
             bool                   enableAtomicVersioning = false,
             string?                versionLockContainer = null
         ) {
+        // Register default version strategy factory if not already registered
+        services.TryAddSingleton<IVersionStrategyFactory, DefaultVersionStrategyFactory>();
+
         services.AddSingleton<IEventStore>(serviceProvider => {
             var serializer = serviceProvider.GetService<IEventSerializer>();
             var metaSerializer = serviceProvider.GetService<IMetadataSerializer>();
             var logger = serviceProvider.GetService<ILogger<AzureEventHubsEventStore>>();
             var loggerFactory = serviceProvider.GetService<ILoggerFactory>();
+
+            // Try to get injected version strategy or factory
+            var versionStrategy = serviceProvider.GetService<IStreamVersionStrategy>();
+            var versionStrategyFactory = serviceProvider.GetService<IVersionStrategyFactory>();
 
             return new AzureEventHubsEventStore(
                 producerClient,
@@ -114,12 +132,86 @@ public static class ServiceCollectionExtensions {
                 metaSerializer,
                 logger,
                 loggerFactory,
+                versionStrategy,
+                versionStrategyFactory,
                 tableServiceClient,
                 enableAtomicVersioning,
                 versionLockContainer
             );
         });
 
+        return services;
+    }
+
+    /// <summary>
+    /// Register a custom version strategy for Azure Event Hubs Event Store
+    /// This allows you to provide your own implementation of IStreamVersionStrategy
+    /// </summary>
+    /// <param name="services">Service collection</param>
+    /// <typeparam name="TStrategy">Type of version strategy to register</typeparam>
+    /// <returns>Service collection for chaining</returns>
+    /// <example>
+    /// <code>
+    /// services.AddAzureEventHubsEventStore(options => { /* ... */ });
+    /// services.RegisterVersionStrategy&lt;MyCustomVersionStrategy&gt;();
+    /// </code>
+    /// </example>
+    public static IServiceCollection RegisterVersionStrategy<TStrategy>(this IServiceCollection services)
+        where TStrategy : class, IStreamVersionStrategy {
+        services.AddSingleton<IStreamVersionStrategy, TStrategy>();
+        return services;
+    }
+
+    /// <summary>
+    /// Register a custom version strategy instance for Azure Event Hubs Event Store
+    /// </summary>
+    /// <param name="services">Service collection</param>
+    /// <param name="strategy">Version strategy instance</param>
+    /// <returns>Service collection for chaining</returns>
+    /// <example>
+    /// <code>
+    /// services.AddAzureEventHubsEventStore(options => { /* ... */ });
+    /// services.RegisterVersionStrategy(new MyCustomVersionStrategy());
+    /// </code>
+    /// </example>
+    public static IServiceCollection RegisterVersionStrategy(
+            this IServiceCollection services,
+            IStreamVersionStrategy strategy
+        ) {
+        services.AddSingleton(strategy);
+        return services;
+    }
+
+    /// <summary>
+    /// Register a custom version strategy factory for Azure Event Hubs Event Store
+    /// This allows you to provide custom logic for creating version strategies
+    /// </summary>
+    /// <param name="services">Service collection</param>
+    /// <typeparam name="TFactory">Type of version strategy factory to register</typeparam>
+    /// <returns>Service collection for chaining</returns>
+    /// <example>
+    /// <code>
+    /// services.AddAzureEventHubsEventStore(options => { /* ... */ });
+    /// services.RegisterVersionStrategyFactory&lt;MyCustomFactory&gt;();
+    /// </code>
+    /// </example>
+    public static IServiceCollection RegisterVersionStrategyFactory<TFactory>(this IServiceCollection services)
+        where TFactory : class, IVersionStrategyFactory {
+        services.Replace(ServiceDescriptor.Singleton<IVersionStrategyFactory, TFactory>());
+        return services;
+    }
+
+    /// <summary>
+    /// Register a custom version strategy factory instance
+    /// </summary>
+    /// <param name="services">Service collection</param>
+    /// <param name="factory">Version strategy factory instance</param>
+    /// <returns>Service collection for chaining</returns>
+    public static IServiceCollection RegisterVersionStrategyFactory(
+            this IServiceCollection services,
+            IVersionStrategyFactory factory
+        ) {
+        services.Replace(ServiceDescriptor.Singleton(factory));
         return services;
     }
 

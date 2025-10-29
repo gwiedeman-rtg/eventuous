@@ -3,6 +3,7 @@
 
 using Eventuous.Azure.EventHubs;
 using Eventuous.Azure.EventHubs.Extensions;
+using Eventuous.Azure.EventHubs.Versioning;
 using Eventuous.Tests.Persistence.Base.Fixtures;
 using Eventuous.Tests.Azure.EventHubs.Integration.Fixtures;
 using Microsoft.Extensions.DependencyInjection;
@@ -11,6 +12,7 @@ using Testcontainers.EventHubs;
 using DotNet.Testcontainers.Containers;
 using Testcontainers.Azurite;
 using DotNet.Testcontainers.Networks;
+using Azure.Storage.Blobs;
 
 namespace Eventuous.Tests.Azure.EventHubs.Integration.Store;
 
@@ -41,16 +43,26 @@ public class BlobLeaseVersionStrategyFixture : StoreFixtureBase<Testcontainers.E
         BlobStorageConnectionString = $"DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:{AzuriteContainer.GetMappedPublicPort(10000)}/devstoreaccount1;";
         TableStorageConnectionString = $"DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;TableEndpoint=http://127.0.0.1:{AzuriteContainer.GetMappedPublicPort(10002)}/devstoreaccount1;";
 
-        // Add Azure Event Hubs Event Store with BlobLeaseVersionStrategy
+        // Register BlobLeaseVersionStrategy explicitly using the injectable approach
+        services.AddSingleton<IStreamVersionStrategy>(serviceProvider => {
+            var blobServiceClient = new BlobServiceClient(BlobStorageConnectionString);
+            var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
+            return new BlobLeaseVersionStrategy(
+                blobServiceClient,
+                "eventuous-locks", // Container name for blob leases
+                loggerFactory.CreateLogger<BlobLeaseVersionStrategy>()
+            );
+        });
+
+        // Add Azure Event Hubs Event Store - will use the injected BlobLeaseVersionStrategy
         services.AddAzureEventHubsEventStore(options => {
             options.EventHubConnectionString = EventHubConnectionString;
             options.EventHubName = "test-hub";
             options.BlobStorageConnectionString = BlobStorageConnectionString;
             options.CaptureContainerName = "test-container";
-            options.TableStorageConnectionString = null; // CRITICAL: Set to null to force BlobLeaseVersionStrategy
             options.ConsumerGroup = "$Default";
             options.UseRealtimeReading = true;
-            options.EnableAtomicVersioning = true; // Enable atomic versioning for BlobLeaseVersionStrategy
+            // Note: EnableAtomicVersioning is not needed when strategy is explicitly injected
         });
 
         // Register the EventStore service - base class will automatically set EventStore property

@@ -3,6 +3,7 @@
 
 using Eventuous.Azure.EventHubs;
 using Eventuous.Azure.EventHubs.Extensions;
+using Eventuous.Azure.EventHubs.Versioning;
 using Eventuous.Tests.Persistence.Base.Fixtures;
 using Eventuous.Tests.Azure.EventHubs.Integration.Fixtures;
 using Microsoft.Extensions.DependencyInjection;
@@ -41,16 +42,23 @@ public class NonAtomicVersionStrategyFixture : StoreFixtureBase<Testcontainers.E
         BlobStorageConnectionString = $"DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:{AzuriteContainer.GetMappedPublicPort(10000)}/devstoreaccount1;";
         TableStorageConnectionString = $"DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;TableEndpoint=http://127.0.0.1:{AzuriteContainer.GetMappedPublicPort(10002)}/devstoreaccount1;";
 
-        // Add Azure Event Hubs Event Store with NonAtomicVersionStrategy
+        // Note: NonAtomicVersionStrategy requires the EventStore instance in its constructor,
+        // creating a circular dependency. Therefore, it cannot be injected directly via DI.
+        // Instead, we rely on the factory/configuration approach which handles this circular
+        // dependency by passing 'this' when creating NonAtomicVersionStrategy.
+
+        // Add Azure Event Hubs Event Store with NonAtomicVersionStrategy via configuration
+        // The factory will create NonAtomicVersionStrategy with the EventStore instance
         services.AddAzureEventHubsEventStore(options => {
             options.EventHubConnectionString = EventHubConnectionString;
             options.EventHubName = "test-hub";
             options.BlobStorageConnectionString = BlobStorageConnectionString;
             options.CaptureContainerName = "test-container";
-            options.TableStorageConnectionString = TableStorageConnectionString;
             options.ConsumerGroup = "$Default";
             options.UseRealtimeReading = true;
             options.EnableAtomicVersioning = false; // Disabled for NonAtomicVersionStrategy
+            // Note: The DefaultVersionStrategyFactory will create NonAtomicVersionStrategy
+            // and pass the EventStore instance to it, resolving the circular dependency
         });
 
         // Register the EventStore service - base class will automatically set EventStore property
