@@ -612,44 +612,60 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
     /// Gets the current version of a stream using a hybrid approach
     ///
     /// This method attempts to determine the stream version by:
-    /// 1. First trying to read from real-time Event Hubs (if enabled)
+    /// 1. First trying to read from real-time Event Hubs (if enabled) with retries
     /// 2. Falling back to reading from captured blob storage
-    /// 3. Using a simple counter approach if both fail
+    /// 3. Returning null if both fail (allowing non-atomic strategies to skip validation)
     ///
-    /// For NonAtomicVersionStrategy, this method may return null if:
-    /// - Event Hubs consumer times out or fails
-    /// - Blob storage doesn't have captured events yet
-    /// - Network issues prevent reliable reading
-    ///
-    /// When null is returned, version validation is skipped, allowing the append
-    /// to proceed. This is the expected behavior for NonAtomicVersionStrategy.
+    /// For NonAtomicVersionStrategy, this method uses longer timeouts and retries
+    /// to account for Event Hubs propagation delays. This is acceptable since non-atomic
+    /// strategies trade some performance for eventual consistency.
     /// </summary>
     /// <param name="stream">Stream name to get version for</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Current stream version, or null if cannot be determined</returns>
     internal async Task<long?> GetCurrentStreamVersion(StreamName stream, CancellationToken cancellationToken) {
         try {
-            // Try to read from real-time first (with short timeout to avoid blocking)
+            // Try to read from real-time first with retries to account for propagation delays
+            // Non-atomic strategies can use longer timeouts since they're not blocking on consistency
             if (_useRealtimeReading) {
-                try {
-                    var realtimeEvents = await _consumer.ReadEventsFromStream(
-                        stream,
-                        EventPosition.Earliest,
-                        1000,
-                        TimeSpan.FromSeconds(2), // Short timeout to avoid blocking
-                        cancellationToken
-                    ).NoContext();
+                const int maxRetries = 3;
+                const int baseTimeoutSeconds = 5; // Longer timeout for non-atomic strategies
 
-                    if (realtimeEvents.Length > 0) {
-                        // Version is 0-indexed: 1 event → version 0
-                        _logger?.LogDebug("Got version {Version} from real-time Event Hubs for stream {Stream}",
-                            realtimeEvents.Length - 1, stream);
-                        return realtimeEvents.Length - 1;
+                for (int attempt = 0; attempt < maxRetries; attempt++) {
+                    try {
+                        var timeout = TimeSpan.FromSeconds(baseTimeoutSeconds * (attempt + 1)); // Exponential backoff
+                        var realtimeEvents = await _consumer.ReadEventsFromStream(
+                            stream,
+                            EventPosition.Earliest,
+                            1000,
+                            timeout,
+                            cancellationToken
+                        ).NoContext();
+
+                        if (realtimeEvents.Length > 0) {
+                            // Version is 0-indexed: 1 event → version 0
+                            _logger?.LogDebug("Got version {Version} from real-time Event Hubs for stream {Stream} (attempt {Attempt})",
+                                realtimeEvents.Length - 1, stream, attempt + 1);
+                            return realtimeEvents.Length - 1;
+                        }
+
+                        // If we got 0 events but no exception, wait a bit and retry (event might still be propagating)
+                        if (attempt < maxRetries - 1) {
+                            await Task.Delay(TimeSpan.FromMilliseconds(500 * (attempt + 1)), cancellationToken).NoContext();
+                            continue;
+                        }
+                    } catch (OperationCanceledException) {
+                        if (attempt < maxRetries - 1) {
+                            _logger?.LogDebug("Real-time reading timed out for stream {Stream} (attempt {Attempt}), retrying...", stream, attempt + 1);
+                            await Task.Delay(TimeSpan.FromMilliseconds(500 * (attempt + 1)), cancellationToken).NoContext();
+                            continue;
+                        }
+                        _logger?.LogDebug("Real-time reading timed out for stream {Stream} after {Attempts} attempts, falling back to captured events", stream, maxRetries);
+                        break;
+                    } catch (Exception ex) {
+                        _logger?.LogDebug(ex, "Failed to read real-time events for stream {Stream} (attempt {Attempt}), falling back to captured events", stream, attempt + 1);
+                        break; // Don't retry on non-timeout exceptions
                     }
-                } catch (OperationCanceledException) {
-                    _logger?.LogDebug("Real-time reading timed out for stream {Stream}, falling back to captured events", stream);
-                } catch (Exception ex) {
-                    _logger?.LogDebug(ex, "Failed to read real-time events for stream {Stream}, falling back to captured events", stream);
                 }
             }
 
