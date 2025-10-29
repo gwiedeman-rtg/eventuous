@@ -12,6 +12,7 @@
     <PackageReference Include="Azure.Storage.Blobs" />
     <PackageReference Include="Azure.Data.Tables" />
     <PackageReference Include="Apache.Avro" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
   </ItemGroup>
 
   <ItemGroup>

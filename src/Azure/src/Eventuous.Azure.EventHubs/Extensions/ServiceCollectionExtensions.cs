@@ -4,6 +4,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Configuration;
 using Eventuous.Producers;
 using Eventuous.Subscriptions;
 using Eventuous.Subscriptions.Checkpoints;
@@ -22,6 +23,95 @@ namespace Eventuous.Azure.EventHubs.Extensions;
 /// Service collection extensions for Azure Event Hubs
 /// </summary>
 public static class ServiceCollectionExtensions {
+    /// <summary>
+    /// Add Azure Event Hubs Event Store to the service collection from configuration
+    /// Binds configuration from IConfiguration (e.g., appsettings.json) to options
+    /// </summary>
+    /// <param name="services">Service collection</param>
+    /// <param name="configuration">Configuration instance (typically from appsettings.json)</param>
+    /// <param name="sectionName">Configuration section name (default: "Eventuous:AzureEventHubs")</param>
+    /// <returns>Service collection for chaining</returns>
+    /// <example>
+    /// <code>
+    /// // In appsettings.json:
+    /// {
+    ///   "Eventuous": {
+    ///     "AzureEventHubs": {
+    ///       "EventHubConnectionString": "...",
+    ///       "EventHubName": "my-hub",
+    ///       "BlobStorageConnectionString": "...",
+    ///       "TableStorageConnectionString": "...",
+    ///       "CaptureContainerName": "events",
+    ///       "EnableAtomicVersioning": true
+    ///     }
+    ///   }
+    /// }
+    ///
+    /// // In Startup.cs:
+    /// services.AddAzureEventHubsEventStore(configuration);
+    /// </code>
+    /// </example>
+    public static IServiceCollection AddAzureEventHubsEventStore(
+            this IServiceCollection services,
+            IConfiguration         configuration,
+            string                 sectionName = "Eventuous:AzureEventHubs"
+        ) {
+        // Bind configuration section to options
+        // Use the configuration section directly - the Configure<T>(IConfigurationSection) extension
+        // method from Microsoft.Extensions.Options.ConfigurationExtensions binds the section
+        services.Configure<AzureEventHubsEventStoreOptions>(
+            configuration.GetSection(sectionName)
+        );
+
+        // Register default version strategy factory if not already registered
+        services.TryAddSingleton<IVersionStrategyFactory, DefaultVersionStrategyFactory>();
+
+        // Register TableServiceClient conditionally if atomic versioning is enabled and table storage is configured
+        services.AddSingleton(serviceProvider => {
+            var options = serviceProvider.GetRequiredService<IOptions<AzureEventHubsEventStoreOptions>>().Value;
+            if (options.EnableAtomicVersioning && !string.IsNullOrWhiteSpace(options.TableStorageConnectionString)) {
+                return new TableServiceClient(options.TableStorageConnectionString);
+            }
+            return null!; // Will be handled in the event store constructor
+        });
+
+        services.AddSingleton<IEventStore>(serviceProvider => {
+            var options = serviceProvider.GetRequiredService<IOptions<AzureEventHubsEventStoreOptions>>().Value;
+            options.Validate();
+
+            var serializer = serviceProvider.GetService<IEventSerializer>();
+            var metaSerializer = serviceProvider.GetService<IMetadataSerializer>();
+            var logger = serviceProvider.GetService<ILogger<AzureEventHubsEventStore>>();
+            var loggerFactory = serviceProvider.GetService<ILoggerFactory>();
+            var tableServiceClient = serviceProvider.GetService<TableServiceClient>();
+            var blobServiceClient = new BlobServiceClient(options.BlobStorageConnectionString);
+
+            // Try to get injected version strategy or factory (user can override by registering)
+            var versionStrategy = serviceProvider.GetService<IStreamVersionStrategy>();
+            var versionStrategyFactory = serviceProvider.GetService<IVersionStrategyFactory>();
+
+            return new AzureEventHubsEventStore(
+                new EventHubProducerClient(options.EventHubConnectionString, options.EventHubName),
+                new EventHubConsumerClient(options.ConsumerGroup, options.EventHubConnectionString, options.EventHubName),
+                blobServiceClient,
+                options.EventHubName,
+                options.CaptureContainerName,
+                options.UseRealtimeReading,
+                serializer,
+                metaSerializer,
+                logger,
+                loggerFactory,
+                versionStrategy,
+                versionStrategyFactory,
+                tableServiceClient,
+                options.EnableAtomicVersioning,
+                options.VersionLockContainerName
+            );
+        });
+
+        return services;
+    }
+
     /// <summary>
     /// Add Azure Event Hubs Event Store to the service collection
     /// </summary>
@@ -55,15 +145,17 @@ public static class ServiceCollectionExtensions {
             var logger = serviceProvider.GetService<ILogger<AzureEventHubsEventStore>>();
             var loggerFactory = serviceProvider.GetService<ILoggerFactory>();
             var tableServiceClient = serviceProvider.GetService<TableServiceClient>();
+            var blobServiceClient = new BlobServiceClient(options.BlobStorageConnectionString);
 
-            // Try to get injected version strategy or factory
+            // Try to get injected version strategy or factory (user can override by registering)
+            // If no custom strategy is injected, the factory will create one based on configuration
             var versionStrategy = serviceProvider.GetService<IStreamVersionStrategy>();
             var versionStrategyFactory = serviceProvider.GetService<IVersionStrategyFactory>();
 
             return new AzureEventHubsEventStore(
                 new EventHubProducerClient(options.EventHubConnectionString, options.EventHubName),
                 new EventHubConsumerClient(options.ConsumerGroup, options.EventHubConnectionString, options.EventHubName),
-                new BlobServiceClient(options.BlobStorageConnectionString),
+                blobServiceClient,
                 options.EventHubName,
                 options.CaptureContainerName,
                 options.UseRealtimeReading,

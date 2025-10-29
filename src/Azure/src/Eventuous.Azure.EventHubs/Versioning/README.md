@@ -25,7 +25,48 @@ The Azure Event Hubs Event Store supports multiple versioning strategies for opt
 
 ## Using Built-in Strategies
 
-### Via Configuration (Recommended)
+### Via Configuration from appsettings.json (Recommended)
+
+The easiest way is to configure everything via `appsettings.json`:
+
+```json
+{
+  "Eventuous": {
+    "AzureEventHubs": {
+      "EventHubConnectionString": "Endpoint=sb://...",
+      "EventHubName": "my-hub",
+      "BlobStorageConnectionString": "DefaultEndpointsProtocol=https;...",
+      "TableStorageConnectionString": "DefaultEndpointsProtocol=https;...",
+      "CaptureContainerName": "events",
+      "ConsumerGroup": "$Default",
+      "UseRealtimeReading": true,
+      "EnableAtomicVersioning": true,
+      "VersionLockContainerName": "eventuous-locks"
+    }
+  }
+}
+```
+
+Then in your `Startup.cs` or `Program.cs`:
+
+```csharp
+// .NET 6+ (Minimal APIs)
+var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddAzureEventHubsEventStore(builder.Configuration);
+
+// Or with custom section name
+builder.Services.AddAzureEventHubsEventStore(
+    builder.Configuration,
+    sectionName: "MyEventHubsConfig"
+);
+```
+
+The strategy is automatically selected based on configuration:
+- If `EnableAtomicVersioning = true` and `TableStorageConnectionString` is provided → `TableStorageVersionStrategy`
+- If `EnableAtomicVersioning = true` and no `TableStorageConnectionString` → `BlobLeaseVersionStrategy`
+- If `EnableAtomicVersioning = false` → `NonAtomicVersionStrategy`
+
+### Via Code Configuration
 
 ```csharp
 services.AddAzureEventHubsEventStore(options => {
@@ -38,12 +79,26 @@ services.AddAzureEventHubsEventStore(options => {
 });
 ```
 
-The strategy is automatically selected:
-- If `EnableAtomicVersioning = true` and `TableStorageConnectionString` is provided → `TableStorageVersionStrategy`
-- If `EnableAtomicVersioning = true` and no `TableStorageConnectionString` → `BlobLeaseVersionStrategy`
-- If `EnableAtomicVersioning = false` → `NonAtomicVersionStrategy`
+### Overriding with Custom Strategy
 
-### Via Direct Injection
+You can override the configuration-based strategy selection by injecting your own strategy:
+
+```csharp
+// Load configuration from appsettings.json
+builder.Services.AddAzureEventHubsEventStore(builder.Configuration);
+
+// But override with a custom strategy (takes priority over configuration)
+builder.Services.RegisterVersionStrategy<MyCustomVersionStrategy>();
+
+// Or register an instance
+builder.Services.RegisterVersionStrategy(
+    new MyCustomVersionStrategy(myService)
+);
+```
+
+### Via Direct Injection (No Configuration)
+
+If you prefer to not use configuration files:
 
 ```csharp
 // Register the strategy first
@@ -55,7 +110,7 @@ services.AddSingleton<IStreamVersionStrategy>(serviceProvider => {
 
 // Then register the event store
 services.AddAzureEventHubsEventStore(options => {
-    // ... configure options
+    // ... configure options (strategy will be ignored if already injected)
 });
 ```
 
@@ -161,11 +216,21 @@ services.RegisterVersionStrategyFactory(new MyVersionStrategyFactory(new MyServi
 
 ## Strategy Selection Priority
 
-The event store selects a version strategy in this order:
+The event store selects a version strategy in this order (highest priority first):
 
-1. **Injected `IStreamVersionStrategy`** - If registered in DI container, this takes highest priority
-2. **Registered `IVersionStrategyFactory`** - If a factory is registered, it's used to create the strategy
-3. **Configuration-based creation** - Falls back to creating built-in strategies based on `EnableAtomicVersioning` and connection strings
+1. **Injected `IStreamVersionStrategy`** - If registered in DI container via `RegisterVersionStrategy()`, this takes highest priority
+2. **Registered `IVersionStrategyFactory`** - If a custom factory is registered, it's used to create the strategy
+3. **Configuration-based creation** - Uses `DefaultVersionStrategyFactory` to create built-in strategies based on:
+   - `EnableAtomicVersioning` setting
+   - `TableStorageConnectionString` presence
+   - Connection strings from `appsettings.json` or code configuration
+
+This means you can:
+- Use configuration by default: `services.AddAzureEventHubsEventStore(configuration)`
+- Override with custom strategy: `services.RegisterVersionStrategy<MyStrategy>()`
+- Override with custom factory: `services.RegisterVersionStrategyFactory<MyFactory>()`
+
+All three approaches work together seamlessly!
 
 ## Best Practices
 
