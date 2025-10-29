@@ -35,11 +35,12 @@ public static class EventHubsContainerBuilder {
 
     /// <summary>
     /// Creates a new network for Event Hubs and Azurite containers
+    /// Uses a unique network name to avoid conflicts, but reuses existing networks when possible
     /// </summary>
     /// <returns>Configured network name</returns>
     public static INetwork CreateNetwork()
         => new NetworkBuilder()
-            .WithName($"eventhubs_test_network_{Guid.NewGuid()}")
+            .WithName($"eventhubs_test_network_{Environment.ProcessId}")
             .Build();
 
     /// <summary>

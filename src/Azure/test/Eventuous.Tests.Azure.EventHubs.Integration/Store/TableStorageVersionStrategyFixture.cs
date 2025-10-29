@@ -34,10 +34,8 @@ public class TableStorageVersionStrategyFixture : StoreFixtureBase<Testcontainer
         // Get connection string from container (base class provides Container property)
         EventHubConnectionString = Container.GetConnectionString();
 
-        // NOTE: The Event Hubs emulator includes internal Azurite, but the ports may not be exposed.
-        // For now, we use localhost endpoints assuming Azurite ports are mapped at the Docker level.
-        // If these don't work, we may need to run a separate Azurite container or disable blob capture tests.
-
+        // Use Azurite container for Blob Storage and Table Storage
+        // The Azurite container provides the storage services needed for TableStorageVersionStrategy
         BlobStorageConnectionString = $"DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:{AzuriteContainer.GetMappedPublicPort(10000)}/devstoreaccount1;";
         TableStorageConnectionString = $"DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;TableEndpoint=http://127.0.0.1:{AzuriteContainer.GetMappedPublicPort(10002)}/devstoreaccount1;";
 
@@ -59,11 +57,19 @@ public class TableStorageVersionStrategyFixture : StoreFixtureBase<Testcontainer
 
     protected override Testcontainers.EventHubs.EventHubsContainer CreateContainer()
     {
+        // Use shared network to avoid Docker network pool exhaustion
         Network = EventHubsContainerBuilder.CreateNetwork();
 
-        AzuriteContainer = EventHubsContainerBuilder.CreateAzurite().WithNetwork(Network).WithNetworkAliases("evhub").Build();
+        // Create Azurite container with proper network configuration
+        AzuriteContainer = EventHubsContainerBuilder.CreateAzurite()
+            .WithNetwork(Network)
+            .WithNetworkAliases("azurite")
+            .Build();
 
-        return EventHubsContainerBuilder.CreateBuilder().WithAzuriteContainer(Network, AzuriteContainer, "evhub").Build();
+        // Create EventHubs container with Azurite integration
+        return EventHubsContainerBuilder.CreateBuilder()
+            .WithAzuriteContainer(Network, AzuriteContainer, "azurite")
+            .Build();
     }
 
     public override async ValueTask DisposeAsync() {
