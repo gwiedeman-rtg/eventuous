@@ -277,9 +277,12 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
                 // Update version atomically using the strategy
                 var expectedVersionValue = expectedVersion == ExpectedStreamVersion.NoStream ? -1 : expectedVersion.Value;
                 nextExpectedVersion = await _versionStrategy.IncrementVersion(stream, expectedVersionValue, events.Count, cancellationToken).NoContext();
+            } catch (AppendToStreamException) {
+                // Re-throw version validation exceptions - these indicate legitimate errors
+                throw;
             } catch (Exception ex) {
                 _logger?.LogWarning(ex, "Failed to increment version for stream {Stream}, calculating locally", stream);
-                // Fall back to local calculation
+                // Fall back to local calculation only for infrastructure errors, not validation errors
                 nextExpectedVersion = currentVersion.HasValue ? currentVersion.Value + events.Count : events.Count - 1;
             }
 

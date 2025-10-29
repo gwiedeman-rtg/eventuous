@@ -69,17 +69,33 @@ public class TableStorageVersionStrategy : IStreamVersionStrategy {
                     cancellationToken: cancellationToken
                 ).NoContext();
 
-                var currentVersion = response.Value.GetInt64("Version") ?? -1;
+                var entity = response.Value;
+                long currentVersion;
+
+                // Get version value - handle different types that Azure Tables might return
+                if (entity.TryGetValue("Version", out var versionObj)) {
+                    currentVersion = versionObj switch {
+                        long l => l,
+                        int i => i,
+                        string s when long.TryParse(s, out var parsed) => parsed,
+                        _ => throw new InvalidOperationException($"Invalid version type: {versionObj?.GetType()}")
+                    };
+                } else {
+                    currentVersion = -1;
+                }
 
                 if (currentVersion != expectedVersion) {
+                    _logger?.LogWarning("Version mismatch for stream {Stream}: expected {Expected}, current {Current}",
+                        stream, expectedVersion, currentVersion);
                     throw new AppendToStreamException(stream, new InvalidOperationException(
                         $"WrongExpectedVersion {expectedVersion}, current version {currentVersion}"));
                 }
 
                 // Update with ETag for conditional update
-                var entity = response.Value;
                 var newVersion = currentVersion + eventCount;
                 entity["Version"] = newVersion;
+
+                _logger?.LogDebug("Updating version for stream {Stream} from {Current} to {New}", stream, currentVersion, newVersion);
 
                 await _tableClient.UpdateEntityAsync(
                     entity,
@@ -111,20 +127,33 @@ public class TableStorageVersionStrategy : IStreamVersionStrategy {
                                 stream.ToString(),
                                 cancellationToken: cancellationToken
                             ).NoContext();
-                            var existingVersion = existingResponse.Value.GetInt64("Version") ?? -1;
+                            var existingEntity = existingResponse.Value;
+                            long existingVersion;
+
+                            if (existingEntity.TryGetValue("Version", out var existingVersionObj)) {
+                                existingVersion = existingVersionObj switch {
+                                    long l => l,
+                                    int i => i,
+                                    string s when long.TryParse(s, out var parsed) => parsed,
+                                    _ => throw new InvalidOperationException($"Invalid version type: {existingVersionObj?.GetType()}")
+                                };
+                            } else {
+                                existingVersion = -1;
+                            }
+
                             if (existingVersion != expectedVersion) {
                                 throw new AppendToStreamException(stream, new InvalidOperationException(
                                     $"WrongExpectedVersion {expectedVersion}, current version {existingVersion}"));
                             }
                             // Update the existing entity
-                            existingResponse.Value["Version"] = existingVersion + eventCount;
+                            existingEntity["Version"] = existingVersion + eventCount;
                             await _tableClient.UpdateEntityAsync(
-                                existingResponse.Value,
-                                existingResponse.Value.ETag,
+                                existingEntity,
+                                existingEntity.ETag,
                                 TableUpdateMode.Replace,
                                 cancellationToken: cancellationToken
                             ).NoContext();
-                            return (long)existingResponse.Value["Version"];
+                            return (long)existingEntity["Version"];
                         } catch {
                             // Re-throw the original exception
                             throw new AppendToStreamException(stream, addEx);
@@ -141,8 +170,13 @@ public class TableStorageVersionStrategy : IStreamVersionStrategy {
             }
         } catch (AppendToStreamException) {
             throw;
+        } catch (RequestFailedException ex) {
+            _logger?.LogError(ex, "Request failed while incrementing version for stream {Stream}: Status {Status}, Message {Message}",
+                stream, ex.Status, ex.Message);
+            throw new AppendToStreamException(stream, ex);
         } catch (Exception ex) {
-            _logger?.LogError(ex, "Failed to increment version for stream {Stream}", stream);
+            _logger?.LogError(ex, "Failed to increment version for stream {Stream}: {ExceptionType} - {Message}",
+                stream, ex.GetType().Name, ex.Message);
             throw new AppendToStreamException(stream, ex);
         }
     }
