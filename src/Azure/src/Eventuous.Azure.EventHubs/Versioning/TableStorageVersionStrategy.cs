@@ -18,10 +18,24 @@ public class TableStorageVersionStrategy : IStreamVersionStrategy {
     public TableStorageVersionStrategy(TableServiceClient tableServiceClient, ILogger<TableStorageVersionStrategy>? logger = null) {
         _tableClient = tableServiceClient.GetTableClient(TableName);
         _logger = logger;
+
+        // Ensure table exists - this is a fire-and-forget call, but we'll handle errors in methods
+        _ = EnsureTableExistsAsync();
+    }
+
+    async Task EnsureTableExistsAsync() {
+        try {
+            await _tableClient.CreateIfNotExistsAsync(cancellationToken: default).NoContext();
+        } catch {
+            // Ignore errors here - we'll handle them when trying to use the table
+        }
     }
 
     public async Task<long?> GetVersion(StreamName stream, CancellationToken cancellationToken) {
         try {
+            // Ensure table exists
+            await _tableClient.CreateIfNotExistsAsync(cancellationToken: cancellationToken).NoContext();
+
             var response = await _tableClient.GetEntityAsync<TableEntity>(
                 PartitionKey,
                 stream.ToString(),
@@ -32,7 +46,7 @@ public class TableStorageVersionStrategy : IStreamVersionStrategy {
                 return version;
             }
         } catch (RequestFailedException ex) when (ex.Status == 404) {
-            // Stream doesn't exist
+            // Stream doesn't exist (entity not found)
             return null;
         } catch (Exception ex) {
             _logger?.LogError(ex, "Failed to get version for stream {Stream}", stream);
@@ -44,6 +58,9 @@ public class TableStorageVersionStrategy : IStreamVersionStrategy {
 
     public async Task<long> IncrementVersion(StreamName stream, long expectedVersion, int eventCount, CancellationToken cancellationToken) {
         try {
+            // Ensure table exists
+            await _tableClient.CreateIfNotExistsAsync(cancellationToken: cancellationToken).NoContext();
+
             // Try to get existing entity
             try {
                 var response = await _tableClient.GetEntityAsync<TableEntity>(
@@ -61,7 +78,8 @@ public class TableStorageVersionStrategy : IStreamVersionStrategy {
 
                 // Update with ETag for conditional update
                 var entity = response.Value;
-                entity["Version"] = currentVersion + eventCount;
+                var newVersion = currentVersion + eventCount;
+                entity["Version"] = newVersion;
 
                 await _tableClient.UpdateEntityAsync(
                     entity,
@@ -70,16 +88,48 @@ public class TableStorageVersionStrategy : IStreamVersionStrategy {
                     cancellationToken: cancellationToken
                 ).NoContext();
 
-                return (long)entity["Version"];
+                return newVersion;
             } catch (RequestFailedException ex) when (ex.Status == 404) {
-                // Stream doesn't exist, create it if expected version is NoStream
+                // Entity doesn't exist, create it if expected version is NoStream
                 if (expectedVersion == -1) {
+                    // For new stream: version starts at -1 (NoStream), after appending eventCount events, version becomes eventCount - 1
+                    // Example: append 1 event to NoStream (-1) -> version becomes 0
+                    var newVersion = eventCount - 1;
                     var entity = new TableEntity(PartitionKey, stream.ToString()) {
-                        ["Version"] = (long)eventCount - 1
+                        ["Version"] = newVersion
                     };
 
-                    await _tableClient.AddEntityAsync(entity, cancellationToken: cancellationToken).NoContext();
-                    return eventCount - 1;
+                    try {
+                        await _tableClient.AddEntityAsync(entity, cancellationToken: cancellationToken).NoContext();
+                        return newVersion;
+                    } catch (RequestFailedException addEx) when (addEx.Status == 404 || addEx.Status == 409) {
+                        // Table might not exist, or entity was created concurrently
+                        // Try to get the entity that might have been created
+                        try {
+                            var existingResponse = await _tableClient.GetEntityAsync<TableEntity>(
+                                PartitionKey,
+                                stream.ToString(),
+                                cancellationToken: cancellationToken
+                            ).NoContext();
+                            var existingVersion = existingResponse.Value.GetInt64("Version") ?? -1;
+                            if (existingVersion != expectedVersion) {
+                                throw new AppendToStreamException(stream, new InvalidOperationException(
+                                    $"WrongExpectedVersion {expectedVersion}, current version {existingVersion}"));
+                            }
+                            // Update the existing entity
+                            existingResponse.Value["Version"] = existingVersion + eventCount;
+                            await _tableClient.UpdateEntityAsync(
+                                existingResponse.Value,
+                                existingResponse.Value.ETag,
+                                TableUpdateMode.Replace,
+                                cancellationToken: cancellationToken
+                            ).NoContext();
+                            return (long)existingResponse.Value["Version"];
+                        } catch {
+                            // Re-throw the original exception
+                            throw new AppendToStreamException(stream, addEx);
+                        }
+                    }
                 }
 
                 throw new AppendToStreamException(stream, new InvalidOperationException(
