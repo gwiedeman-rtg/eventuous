@@ -42,7 +42,14 @@ public class TableStorageVersionStrategy : IStreamVersionStrategy {
                 cancellationToken: cancellationToken
             ).NoContext();
 
-            if (response.Value.TryGetValue("Version", out var versionObj) && versionObj is long version) {
+            // Handle different types that Azure Tables might return
+            if (response.Value.TryGetValue("Version", out var versionObj)) {
+                long version = versionObj switch {
+                    long l => l,
+                    int i => i,
+                    string s when long.TryParse(s, out var parsed) => parsed,
+                    _ => throw new InvalidOperationException($"Invalid version type: {versionObj?.GetType()}")
+                };
                 return version;
             }
         } catch (RequestFailedException ex) when (ex.Status == 404) {

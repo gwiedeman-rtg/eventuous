@@ -206,24 +206,31 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
 
         try {
             long? currentVersion = null;
+            var isAtomicStrategy = _versionStrategy is TableStorageVersionStrategy || _versionStrategy is BlobLeaseVersionStrategy;
 
             // Use version strategy to get current version and validate
+            // For atomic strategies, we MUST get the version before proceeding - no skipping validation
             try {
                 currentVersion = await _versionStrategy.GetVersion(stream, cancellationToken).NoContext();
             } catch (Exception ex) {
-                _logger?.LogWarning(ex, "Failed to get version for stream {Stream}, continuing with append", stream);
-                currentVersion = null;
+                if (isAtomicStrategy) {
+                    // For atomic strategies, we cannot skip validation - fail if we can't get version
+                    _logger?.LogError(ex, "Failed to get version for stream {Stream} - cannot proceed with atomic versioning strategy", stream);
+                    throw new AppendToStreamException(stream, new InvalidOperationException("Unable to retrieve stream version for validation", ex));
+                } else {
+                    // For non-atomic strategies, we can continue (but validation will be unreliable)
+                    _logger?.LogWarning(ex, "Failed to get version for stream {Stream}, continuing with append (non-atomic strategy)", stream);
+                    currentVersion = null;
+                }
             }
 
             // Handle NoStream case - use version strategy to check if stream exists
             if (expectedVersion == ExpectedStreamVersion.NoStream) {
                 // For atomic versioning strategies (TableStorage, BlobLease), use GetVersion to check if stream exists
                 // For non-atomic strategies, fall back to StreamExists
-                if (_versionStrategy is TableStorageVersionStrategy || _versionStrategy is BlobLeaseVersionStrategy) {
-                    var streamVersion = await _versionStrategy.GetVersion(stream, cancellationToken).NoContext();
-                    // If GetVersion returns a value >= 0, the stream exists and we should throw
-                    // If it returns null or -1, the stream doesn't exist and we can proceed
-                    if (streamVersion.HasValue && streamVersion.Value >= 0) {
+                if (isAtomicStrategy) {
+                    // We already got the version above, check if it exists
+                    if (currentVersion.HasValue && currentVersion.Value >= 0) {
                         throw new AppendToStreamException(stream, new InvalidOperationException($"WrongExpectedVersion {-1}, stream already exists"));
                     }
                 } else {
@@ -237,12 +244,23 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
             // Check expected version for optimistic concurrency (skip for Any)
             else if (expectedVersion != ExpectedStreamVersion.Any) {
                 // Expected version is a specific number (0, 1, 2, ...)
-                if (!currentVersion.HasValue) {
-                    // If we couldn't get version, we can't validate, so skip validation for now
-                    // This allows the append to proceed
-                    _logger?.LogDebug("Could not get version for stream {Stream}, skipping version validation", stream);
-                } else if (currentVersion.Value != expectedVersion.Value) {
-                    throw new AppendToStreamException(stream, new InvalidOperationException($"WrongExpectedVersion {expectedVersion.Value}, current version {currentVersion.Value}"));
+                if (isAtomicStrategy) {
+                    // For atomic strategies, we MUST have a version to validate - this prevents race conditions
+                    if (!currentVersion.HasValue) {
+                        // Should not happen if GetVersion succeeded above, but handle it defensively
+                        throw new AppendToStreamException(stream, new InvalidOperationException("Stream version is required for validation but not available"));
+                    }
+
+                    if (currentVersion.Value != expectedVersion.Value) {
+                        throw new AppendToStreamException(stream, new InvalidOperationException($"WrongExpectedVersion {expectedVersion.Value}, current version {currentVersion.Value}"));
+                    }
+                } else {
+                    // For non-atomic strategies, validation is best-effort
+                    if (!currentVersion.HasValue) {
+                        _logger?.LogDebug("Could not get version for stream {Stream}, skipping version validation (non-atomic strategy)", stream);
+                    } else if (currentVersion.Value != expectedVersion.Value) {
+                        throw new AppendToStreamException(stream, new InvalidOperationException($"WrongExpectedVersion {expectedVersion.Value}, current version {currentVersion.Value}"));
+                    }
                 }
             }
 
@@ -271,18 +289,21 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
                 _logger?.LogInformation("Successfully sent {Count} events to Event Hubs for stream {Stream}", eventDataBatch.Count, stream);
             }
 
-            // Calculate next version
+            // Calculate next version atomically
+            // Note: We've already validated the version above, but IncrementVersion will perform a final atomic check
+            // to ensure no concurrent modifications occurred between validation and now. This provides strong consistency.
             long nextExpectedVersion;
             try {
-                // Update version atomically using the strategy
                 var expectedVersionValue = expectedVersion == ExpectedStreamVersion.NoStream ? -1 : expectedVersion.Value;
                 nextExpectedVersion = await _versionStrategy.IncrementVersion(stream, expectedVersionValue, events.Count, cancellationToken).NoContext();
             } catch (AppendToStreamException) {
-                // Re-throw version validation exceptions - these indicate legitimate errors
+                // Re-throw version validation exceptions - these indicate concurrent modifications or race conditions
+                // that occurred between our initial validation and the atomic increment
                 throw;
             } catch (Exception ex) {
+                // For infrastructure errors (network, storage unavailable, etc.), fall back to local calculation
+                // This should be rare and only for non-atomic strategies or when infrastructure is unreliable
                 _logger?.LogWarning(ex, "Failed to increment version for stream {Stream}, calculating locally", stream);
-                // Fall back to local calculation only for infrastructure errors, not validation errors
                 nextExpectedVersion = currentVersion.HasValue ? currentVersion.Value + events.Count : events.Count - 1;
             }
 
