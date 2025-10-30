@@ -15,7 +15,7 @@ public class Append(StoreFixture fixture) : StoreAppendTests<StoreFixture>(fixtu
 
 [InheritsTests]
 [ClassDataSource<StoreFixture>]
-public class Read(StoreFixture fixture) : StoreReadTests<StoreFixture>(fixture);
+public class Read(TableStorageVersionStrategyFixture fixture) : StoreReadTests<BlobLeaseVersionStrategyFixture>(fixture);
 
 [InheritsTests]
 [ClassDataSource<StoreFixture>]
