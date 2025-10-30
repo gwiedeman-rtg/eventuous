@@ -94,35 +94,75 @@ public class AzureEventHubsConsumer : IDisposable {
 
             combinedCts.CancelAfter(readTimeout);
 
+            // Increase MaximumWaitTime to give events more time to become available
+            // This helps when reading immediately after writes
             var readOptions = new ReadEventOptions {
-                MaximumWaitTime = TimeSpan.FromSeconds(1)
+                MaximumWaitTime = TimeSpan.FromSeconds(5) // Increased from 1 second to allow more time for events to propagate
             };
 
             // Read from all partitions to find events for this stream
-            //var partitionIds = await _consumerClient.GetPartitionIdsAsync(combinedCts.Token).NoContext();
             var partitionIds = await _consumerClient.GetPartitionIdsAsync().NoContext();
+            _logger?.LogDebug("Reading events from {PartitionCount} partitions for stream {Stream}", partitionIds.Length, stream);
 
+            // For Event Hubs, we need to read from all partitions and filter by StreamName property
+            // Events might be distributed across partitions, so we read from each partition
             var readTasks = partitionIds.Select(async partitionId => {
                 var partitionEvents = new List<StreamEvent>();
+                var eventsRead = 0;
+                var lastSequenceNumber = -1L;
 
-                await foreach (var partitionEvent in _consumerClient.ReadEventsFromPartitionAsync(
-                    partitionId,
-                    startPosition,
-                    readOptions,
-                    combinedCts.Token
-                )) {
-                    if (partitionEvents.Count >= maxEvents) break;
+                try {
+                    await foreach (var partitionEvent in _consumerClient.ReadEventsFromPartitionAsync(
+                        partitionId,
+                        startPosition,
+                        readOptions,
+                        combinedCts.Token
+                    )) {
+                        eventsRead++;
 
-                    // Skip events with null Data (system events from emulator)
-                    if (partitionEvent.Data == null) {
-                        _logger?.LogTrace("Skipping event with null Data from partition {PartitionId}", partitionId);
-                        continue;
+                        // Track progress - if we're seeing events but none match our stream, log it
+                        if (partitionEvent.Data != null) {
+                            lastSequenceNumber = partitionEvent.Data.SequenceNumber;
+                        }
+
+                        // Break early if we have enough matching events
+                        if (partitionEvents.Count >= maxEvents) {
+                            _logger?.LogDebug("Found enough events ({Count}) from partition {PartitionId} for stream {Stream}",
+                                partitionEvents.Count, partitionId, stream);
+                            break;
+                        }
+
+                        // Skip events with null Data (system events from emulator)
+                        if (partitionEvent.Data == null) {
+                            _logger?.LogTrace("Skipping event with null Data from partition {PartitionId}", partitionId);
+                            continue;
+                        }
+
+                        // Filter by StreamName property
+                        var streamEvent = ConvertToStreamEvent(partitionEvent, stream);
+                        if (streamEvent != null) {
+                            partitionEvents.Add(streamEvent.Value);
+                            _logger?.LogTrace("Found matching event for stream {Stream} from partition {PartitionId}, SequenceNumber={SequenceNumber}",
+                                stream, partitionId, partitionEvent.Data.SequenceNumber);
+                        }
+
+                        // Stop reading from this partition if we've read many events but none match
+                        // This prevents infinite loops on partitions that don't have our stream's events
+                        if (eventsRead > maxEvents * 10 && partitionEvents.Count == 0) {
+                            _logger?.LogDebug("Stopped reading from partition {PartitionId} after {EventsRead} events with no matches for stream {Stream}, last SequenceNumber={SequenceNumber}",
+                                partitionId, eventsRead, stream, lastSequenceNumber);
+                            break;
+                        }
                     }
+                } catch (OperationCanceledException) when (!combinedCts.Token.IsCancellationRequested) {
+                    // Timeout - this is expected when reading from a partition with no new events
+                    _logger?.LogTrace("Read timeout from partition {PartitionId} for stream {Stream} after reading {EventsRead} events, found {MatchingCount} matches",
+                        partitionId, stream, eventsRead, partitionEvents.Count);
+                }
 
-                    var streamEvent = ConvertToStreamEvent(partitionEvent, stream);
-                    if (streamEvent != null) {
-                        partitionEvents.Add(streamEvent.Value);
-                    }
+                if (partitionEvents.Count > 0) {
+                    _logger?.LogDebug("Found {Count} matching events from partition {PartitionId} for stream {Stream}",
+                        partitionEvents.Count, partitionId, stream);
                 }
 
                 return partitionEvents;
@@ -245,12 +285,21 @@ public class AzureEventHubsConsumer : IDisposable {
 
             // Check if this event belongs to the target stream (if specified)
             if (targetStream != null) {
-                if (!eventData.Properties.TryGetValue("StreamName", out var streamNameObj) ||
-                    streamNameObj?.ToString() != targetStream.ToString()) {
-                    _logger?.LogDebug("Event belongs to different stream: Expected={Expected}, Actual={Actual}",
-                        targetStream, streamNameObj?.ToString() ?? "null");
+                if (!eventData.Properties.TryGetValue("StreamName", out var streamNameObj)) {
+                    _logger?.LogTrace("Event missing StreamName property, MessageId={MessageId}", eventData.MessageId);
                     return null;
                 }
+
+                var actualStreamName = streamNameObj?.ToString();
+                var expectedStreamName = targetStream.ToString();
+
+                if (actualStreamName != expectedStreamName) {
+                    _logger?.LogTrace("Event belongs to different stream: Expected={Expected}, Actual={Actual}, MessageId={MessageId}",
+                        expectedStreamName, actualStreamName ?? "null", eventData.MessageId);
+                    return null;
+                }
+
+                _logger?.LogTrace("Event matches target stream: Stream={Stream}, MessageId={MessageId}", targetStream, eventData.MessageId);
             }
 
             // Extract event type

@@ -41,6 +41,28 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
     bool _disposed;
 
     /// <summary>
+    /// Ensure the capture container exists, create it if it doesn't
+    /// </summary>
+    async Task EnsureCaptureContainerExists(CancellationToken cancellationToken) {
+        try {
+            var containerClient = _blobServiceClient.GetBlobContainerClient(_captureContainerName);
+            var response = await containerClient.CreateIfNotExistsAsync(cancellationToken: cancellationToken).NoContext();
+            if (response != null) {
+                _logger?.LogDebug("Created capture container {ContainerName}", _captureContainerName);
+            } else {
+                _logger?.LogDebug("Capture container {ContainerName} already exists", _captureContainerName);
+            }
+        } catch (RequestFailedException ex) when (ex.Status == 409) {
+            // Container was created by another thread/process concurrently, which is fine
+            _logger?.LogDebug("Container {ContainerName} already exists (concurrent creation)", _captureContainerName);
+        } catch (Exception ex) {
+            _logger?.LogWarning(ex, "Failed to ensure capture container {ContainerName} exists", _captureContainerName);
+            // Continue anyway - the actual operation will fail if container doesn't exist
+            // This allows the operation to provide a more specific error message
+        }
+    }
+
+    /// <summary>
     /// Initialize the event store with Event Hub producer and Blob storage client for reading captured events
     /// </summary>
     /// <param name="producerClient">Event Hub producer client instance</param>
@@ -190,6 +212,7 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
             // Always check blob storage for captured events as fallback
             // Note: Azure Event Hubs Capture writes events to blob storage asynchronously,
             // so newly written events might not be immediately available here
+            await EnsureCaptureContainerExists(cancellationToken).NoContext();
             var containerClient = _blobServiceClient.GetBlobContainerClient(_captureContainerName);
             var blobPages = containerClient.GetBlobsAsync(prefix: GetBlobPrefix(stream), cancellationToken: cancellationToken)
                 .AsPages(pageSizeHint: 10); // Check more pages since we need to parse events from blobs
@@ -314,6 +337,10 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
                 _logger?.LogInformation("Sending {Count} events to Event Hubs for stream {Stream}", eventDataBatch.Count, stream);
                 await _producerClient.SendAsync(eventDataBatch, cancellationToken).NoContext();
                 _logger?.LogInformation("Successfully sent {Count} events to Event Hubs for stream {Stream}", eventDataBatch.Count, stream);
+
+                // Give Event Hubs a moment to commit the events before they become readable
+                // This helps with immediate reads after writes
+                await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken).NoContext();
             }
 
             // Calculate next version atomically
@@ -356,40 +383,132 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
         ) {
         try {
             var events = new List<StreamEvent>();
+            var allRealtimeEvents = new List<StreamEvent>();
 
-            // First, try to read from real-time Event Hubs if enabled
+            // First, try to read from real-time Event Hubs if enabled (events are immediately available)
+            // We'll retry a few times to account for propagation delays
+            // For recent events, try Latest first (more efficient), then fall back to Earliest if needed
             if (_useRealtimeReading) {
-                try {
-                    var realtimeEvents = await _consumer.ReadEventsFromStream(
-                        stream,
-                        EventPosition.Earliest,
-                        count,
-                        TimeSpan.FromSeconds(30), // Increased timeout to allow events to propagate
-                        cancellationToken
-                    ).NoContext();
+                const int maxRetries = 3;
+                for (int attempt = 0; attempt < maxRetries; attempt++) {
+                    try {
+                        // For recent reads, use EnqueuedTime to get events from the last few seconds
+                        // This captures events that were just written (Latest waits for NEW events)
+                        // For later attempts, fall back to Earliest to get all historical events
+                        EventPosition position;
+                        if (attempt == 0) {
+                            // Read events enqueued in the last 30 seconds to capture recently written events
+                            position = EventPosition.FromEnqueuedTime(DateTimeOffset.UtcNow.AddSeconds(-30));
+                            _logger?.LogDebug("Reading from Event Hubs for stream {Stream}, attempt {Attempt}, position EnqueuedTime(30s ago)",
+                                stream, attempt + 1);
+                        } else {
+                            position = EventPosition.Earliest;
+                            _logger?.LogDebug("Reading from Event Hubs for stream {Stream}, attempt {Attempt}, position Earliest",
+                                stream, attempt + 1);
+                        }
+                        var timeout = TimeSpan.FromSeconds(10 * (attempt + 1)); // Increasing timeout per attempt
 
-                    events.AddRange(realtimeEvents.Skip((int)start.Value).Take(count));
+                        // Read more events than needed to ensure we get all available events for de-duplication
+                        var realtimeEvents = await _consumer.ReadEventsFromStream(
+                            stream,
+                            position,
+                            Math.Max(count * 2, 100), // Read more to account for potential duplicates with blob storage
+                            timeout,
+                            cancellationToken
+                        ).NoContext();
 
-                    if (events.Count >= count) {
-                        return events.ToArray();
+                        if (realtimeEvents.Length > 0) {
+                            allRealtimeEvents.AddRange(realtimeEvents);
+                            _logger?.LogDebug("Read {Count} real-time events from stream {Stream} (attempt {Attempt})",
+                                realtimeEvents.Length, stream, attempt + 1);
+
+                            // Apply start position and count after combining with potential blob events
+                            events.AddRange(realtimeEvents.Skip((int)start.Value).Take(count));
+
+                            if (events.Count >= count) {
+                                // We have enough from Event Hubs, return immediately
+                                return events.Take(count).ToArray();
+                            }
+                        } else if (attempt < maxRetries - 1) {
+                            // No events yet, wait a bit and retry (events might still be propagating)
+                            _logger?.LogDebug("No events found in real-time read for stream {Stream} (attempt {Attempt}), waiting before retry",
+                                stream, attempt + 1);
+                            await Task.Delay(TimeSpan.FromMilliseconds(500 * (attempt + 1)), cancellationToken).NoContext();
+                            continue;
+                        }
+                        break; // Either we have events or we've exhausted retries
+                    } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) {
+                        // Timeout occurred, try again if we have retries left
+                        if (attempt < maxRetries - 1) {
+                            _logger?.LogDebug("Real-time read timeout for stream {Stream} (attempt {Attempt}), retrying",
+                                stream, attempt + 1);
+                            await Task.Delay(TimeSpan.FromMilliseconds(500 * (attempt + 1)), cancellationToken).NoContext();
+                            continue;
+                        }
+                        _logger?.LogDebug("Real-time read timeout for stream {Stream} after {Attempts} attempts, will try captured events",
+                            stream, maxRetries);
+                        break;
+                    } catch (Exception ex) {
+                        _logger?.LogDebug(ex, "Failed to read real-time events from stream {Stream} (attempt {Attempt}), will try captured events",
+                            stream, attempt + 1);
+                        break; // Don't retry on non-timeout exceptions
                     }
-                } catch (Exception ex) {
-                    _logger?.LogWarning(ex, "Failed to read real-time events from stream {Stream}, falling back to captured events", stream);
                 }
             }
 
-            // If we don't have enough events from real-time, read from captured events
-            var remainingCount = count - events.Count;
-            if (remainingCount > 0) {
-                var capturedEvents = await ReadEventsFromCapture(stream, start, remainingCount, cancellationToken).NoContext();
-                events.AddRange(capturedEvents);
+            // If we don't have enough events from real-time, also read from captured events (blob storage)
+            // Note: Event Hubs Capture writes events asynchronously, so recently written events may not be in blob storage yet
+            // We'll combine both sources and de-duplicate based on event ID
+            var capturedEvents = new List<StreamEvent>();
+            try {
+                // Ensure container exists before reading (gracefully handles if it doesn't exist)
+                await EnsureCaptureContainerExists(cancellationToken).NoContext();
+                var fromCapture = await ReadEventsFromCapture(stream, start, count * 2, cancellationToken).NoContext();
+                capturedEvents.AddRange(fromCapture);
+            } catch (RequestFailedException ex) when (ex.Status == 404 && ex.ErrorCode == "ContainerNotFound") {
+                // Container doesn't exist yet - this is fine, just means capture hasn't started or container wasn't created
+                _logger?.LogDebug("Capture container {ContainerName} does not exist yet for stream {Stream}, using Event Hubs events only",
+                    _captureContainerName, stream);
+            } catch (Exception ex) {
+                _logger?.LogDebug(ex, "Failed to read captured events from stream {Stream}, using Event Hubs events only", stream);
             }
 
-            if (!events.Any() && failIfNotFound) {
-                throw new StreamNotFound(stream);
+            // De-duplicate events from both sources (by EventId) and combine
+            // Real-time events take priority (they're the source of truth for recent events)
+            var eventMap = new Dictionary<string, StreamEvent>();
+
+            // Add captured events first (older events)
+            foreach (var evt in capturedEvents) {
+                var eventId = evt.Id.ToString();
+                if (!eventMap.ContainsKey(eventId)) {
+                    eventMap[eventId] = evt;
+                }
             }
 
-            return events.Take(count).ToArray();
+            // Add real-time events (overwrite captured events if duplicates, since real-time is authoritative)
+            foreach (var evt in allRealtimeEvents) {
+                var eventId = evt.Id.ToString();
+                eventMap[eventId] = evt; // Real-time events take priority
+            }
+
+            // Combine all events, sort by position, and apply start position
+            var allEvents = eventMap.Values
+                .OrderBy(e => e.Position)
+                .Skip((int)start.Value)
+                .Take(count)
+                .ToArray();
+
+            // Only throw StreamNotFound if we have no events AND failIfNotFound is true
+            // This handles the case where events were just written and haven't propagated yet
+            if (!allEvents.Any()) {
+                if (failIfNotFound) {
+                    _logger?.LogDebug("No events found for stream {Stream} from either Event Hubs or blob storage", stream);
+                    throw new StreamNotFound(stream);
+                }
+                return [];
+            }
+
+            return allEvents;
         } catch (StreamNotFound) {
             throw;
         } catch (Exception ex) {
@@ -413,25 +532,61 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
         ) {
         try {
             var allEvents = new List<StreamEvent>();
-            var containerClient = _blobServiceClient.GetBlobContainerClient(_captureContainerName);
 
-            // Get captured event blobs for this stream
-            var blobPrefix = GetBlobPrefix(stream);
-            var blobs = containerClient.GetBlobsAsync(prefix: blobPrefix, cancellationToken: cancellationToken);
-
-            // Collect all events first
-            await foreach (var blobItem in blobs) {
-                var blobClient = containerClient.GetBlobClient(blobItem.Name);
-                var streamEvents = await ReadEventsFromBlob(blobClient, stream, cancellationToken).NoContext();
-                allEvents.AddRange(streamEvents);
+            // First, try to read from real-time Event Hubs (recent events may not be in blob storage yet)
+            if (_useRealtimeReading) {
+                try {
+                    var realtimeEvents = await _consumer.ReadEventsFromStream(
+                        stream,
+                        EventPosition.Earliest,
+                        Math.Max(count * 2, 100),
+                        TimeSpan.FromSeconds(30),
+                        cancellationToken
+                    ).NoContext();
+                    allEvents.AddRange(realtimeEvents);
+                } catch (Exception ex) {
+                    _logger?.LogDebug(ex, "Failed to read real-time events from stream {Stream} for backwards read, using captured events only", stream);
+                }
             }
 
-            if (!allEvents.Any() && failIfNotFound) {
+            // Also read from captured events in blob storage
+            try {
+                await EnsureCaptureContainerExists(cancellationToken).NoContext();
+                var containerClient = _blobServiceClient.GetBlobContainerClient(_captureContainerName);
+                var blobPrefix = GetBlobPrefix(stream);
+                var blobs = containerClient.GetBlobsAsync(prefix: blobPrefix, cancellationToken: cancellationToken);
+
+                // Collect all events from blobs
+                await foreach (var blobItem in blobs) {
+                    try {
+                        var blobClient = containerClient.GetBlobClient(blobItem.Name);
+                        var streamEvents = await ReadEventsFromBlob(blobClient, stream, cancellationToken).NoContext();
+                        allEvents.AddRange(streamEvents);
+                    } catch (Exception ex) {
+                        _logger?.LogDebug(ex, "Failed to read events from blob {BlobName} for stream {Stream}", blobItem.Name, stream);
+                    }
+                }
+            } catch (RequestFailedException ex) when (ex.Status == 404 && ex.ErrorCode == "ContainerNotFound") {
+                _logger?.LogDebug("Capture container does not exist for backwards read, using Event Hubs events only");
+            } catch (Exception ex) {
+                _logger?.LogDebug(ex, "Failed to read captured events for backwards read, using Event Hubs events only");
+            }
+
+            // De-duplicate by EventId (real-time events take priority)
+            var eventMap = new Dictionary<string, StreamEvent>();
+            foreach (var evt in allEvents) {
+                var eventId = evt.Id.ToString();
+                if (!eventMap.ContainsKey(eventId)) {
+                    eventMap[eventId] = evt;
+                }
+            }
+
+            if (!eventMap.Any() && failIfNotFound) {
                 throw new StreamNotFound(stream);
             }
 
             // Sort by position and take from the end
-            var sortedEvents = allEvents.OrderBy(e => e.Position).ToArray();
+            var sortedEvents = eventMap.Values.OrderBy(e => e.Position).ToArray();
             var startIndex = start.Value == long.MaxValue ? sortedEvents.Length - 1 : (int)start.Value;
             var result = new List<StreamEvent>();
 
@@ -514,32 +669,50 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
             CancellationToken cancellationToken
         ) {
         var events = new List<StreamEvent>();
-        var containerClient = _blobServiceClient.GetBlobContainerClient(_captureContainerName);
 
-        // Get captured event blobs for this stream
-        var blobPrefix = GetBlobPrefix(stream);
-        var blobs = containerClient.GetBlobsAsync(prefix: blobPrefix, cancellationToken: cancellationToken);
+        try {
+            // Ensure container exists before reading
+            await EnsureCaptureContainerExists(cancellationToken).NoContext();
+            var containerClient = _blobServiceClient.GetBlobContainerClient(_captureContainerName);
 
-        var processedEvents = 0;
-        var skippedEvents = 0;
+            // Get captured event blobs for this stream
+            var blobPrefix = GetBlobPrefix(stream);
+            var blobs = containerClient.GetBlobsAsync(prefix: blobPrefix, cancellationToken: cancellationToken);
 
-        await foreach (var blobItem in blobs) {
-            if (events.Count >= count) break;
+            var processedEvents = 0;
+            var skippedEvents = 0;
 
-            var blobClient = containerClient.GetBlobClient(blobItem.Name);
-            var streamEvents = await ReadEventsFromBlob(blobClient, stream, cancellationToken).NoContext();
-
-            foreach (var streamEvent in streamEvents) {
-                if (skippedEvents < start.Value) {
-                    skippedEvents++;
-                    continue;
-                }
-
+            await foreach (var blobItem in blobs) {
                 if (events.Count >= count) break;
 
-                events.Add(streamEvent with { Position = processedEvents });
-                processedEvents++;
+                try {
+                    var blobClient = containerClient.GetBlobClient(blobItem.Name);
+                    var streamEvents = await ReadEventsFromBlob(blobClient, stream, cancellationToken).NoContext();
+
+                    foreach (var streamEvent in streamEvents) {
+                        if (skippedEvents < start.Value) {
+                            skippedEvents++;
+                            continue;
+                        }
+
+                        if (events.Count >= count) break;
+
+                        events.Add(streamEvent with { Position = processedEvents });
+                        processedEvents++;
+                    }
+                } catch (Exception ex) {
+                    _logger?.LogDebug(ex, "Failed to read events from blob {BlobName} for stream {Stream}", blobItem.Name, stream);
+                    // Continue reading other blobs
+                }
             }
+        } catch (RequestFailedException ex) when (ex.Status == 404 && ex.ErrorCode == "ContainerNotFound") {
+            // Container doesn't exist yet - return empty list (events may not be captured yet)
+            _logger?.LogDebug("Capture container {ContainerName} does not exist for stream {Stream}, returning empty",
+                _captureContainerName, stream);
+            return [];
+        } catch (Exception ex) {
+            _logger?.LogDebug(ex, "Failed to read captured events for stream {Stream}, returning partial results", stream);
+            // Return what we have so far
         }
 
         return events.ToArray();
@@ -697,6 +870,7 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
             }
 
             // Fallback to reading from captured events
+            await EnsureCaptureContainerExists(cancellationToken).NoContext();
             var containerClient = _blobServiceClient.GetBlobContainerClient(_captureContainerName);
             var blobPrefix = GetBlobPrefix(stream);
             var blobs = containerClient.GetBlobsAsync(prefix: blobPrefix, cancellationToken: cancellationToken);
