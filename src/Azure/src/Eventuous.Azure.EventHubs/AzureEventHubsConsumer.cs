@@ -110,6 +110,7 @@ public class AzureEventHubsConsumer : IDisposable {
                 var partitionEvents = new List<StreamEvent>();
                 var eventsRead = 0;
                 var lastSequenceNumber = -1L;
+                var nonMatchingSeen = 0;
 
                 try {
                     await foreach (var partitionEvent in _consumerClient.ReadEventsFromPartitionAsync(
@@ -144,6 +145,8 @@ public class AzureEventHubsConsumer : IDisposable {
                             partitionEvents.Add(streamEvent.Value);
                             _logger?.LogTrace("Found matching event for stream {Stream} from partition {PartitionId}, SequenceNumber={SequenceNumber}",
                                 stream, partitionId, partitionEvent.Data.SequenceNumber);
+                        } else {
+                            nonMatchingSeen++;
                         }
 
                         // Stop reading from this partition if we've read many events but none match
@@ -163,6 +166,9 @@ public class AzureEventHubsConsumer : IDisposable {
                 if (partitionEvents.Count > 0) {
                     _logger?.LogDebug("Found {Count} matching events from partition {PartitionId} for stream {Stream}",
                         partitionEvents.Count, partitionId, stream);
+                } else {
+                    _logger?.LogDebug("No matching events from partition {PartitionId} for stream {Stream}. Read {EventsRead} events, {NonMatching} did not match.",
+                        partitionId, stream, eventsRead, nonMatchingSeen);
                 }
 
                 return partitionEvents;
@@ -176,6 +182,33 @@ public class AzureEventHubsConsumer : IDisposable {
                 .OrderBy(x => x.Position)
                 .Take(maxEvents)
                 .ToList();
+
+            if (events.Count == 0) {
+                _logger?.LogDebug("ReadEventsFromStream found 0 matching events for {Stream} when reading per-partition. Falling back to ReadEventsAsync.", stream);
+
+                var fallback = new List<StreamEvent>();
+                var eventsRead = 0;
+
+                try {
+                    await foreach (var ev in _consumerClient.ReadEventsAsync(readOptions, combinedCts.Token)) {
+                        eventsRead++;
+
+                        if (ev.Data == null) continue;
+
+                        var streamEvent = ConvertToStreamEvent(ev, stream);
+                        if (streamEvent != null) {
+                            fallback.Add(streamEvent.Value);
+                            if (fallback.Count >= maxEvents) break;
+                        }
+                    }
+                } catch (OperationCanceledException) when (!combinedCts.Token.IsCancellationRequested) {
+                    _logger?.LogTrace("Fallback ReadEventsAsync timeout for {Stream} after reading {EventsRead} events, found {Matching}", stream, eventsRead, fallback.Count);
+                }
+
+                if (fallback.Count > 0) {
+                    events = fallback.OrderBy(x => x.Position).Take(maxEvents).ToList();
+                }
+            }
 
         } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
             throw;
@@ -285,13 +318,13 @@ public class AzureEventHubsConsumer : IDisposable {
 
             // Check if this event belongs to the target stream (if specified)
             if (targetStream != null) {
-                if (!eventData.Properties.TryGetValue("StreamName", out var streamNameObj)) {
-                    _logger?.LogTrace("Event missing StreamName property, MessageId={MessageId}", eventData.MessageId);
-                    return null;
-                }
-
-                var actualStreamName = streamNameObj?.ToString();
                 var expectedStreamName = targetStream.ToString();
+
+                // Try common property casings/keys
+                string? actualStreamName = null;
+                if (eventData.Properties.TryGetValue("StreamName", out var s1)) actualStreamName = s1?.ToString();
+                else if (eventData.Properties.TryGetValue("streamName", out var s2)) actualStreamName = s2?.ToString();
+                else if (eventData.Properties.TryGetValue("stream", out var s3)) actualStreamName = s3?.ToString();
 
                 if (actualStreamName != expectedStreamName) {
                     _logger?.LogTrace("Event belongs to different stream: Expected={Expected}, Actual={Actual}, MessageId={MessageId}",

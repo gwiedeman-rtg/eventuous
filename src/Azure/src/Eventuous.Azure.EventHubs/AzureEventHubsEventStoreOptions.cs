@@ -31,7 +31,7 @@ public class AzureEventHubsEventStoreOptions {
     /// Whether to enable atomic optimistic concurrency control
     /// When enabled, uses Table Storage (if configured) or Blob Lease for atomic version checking
     /// </summary>
-    public bool EnableAtomicVersioning { get; set; } = false;
+    public bool EnableAtomicVersioning { get; set; } = true;
 
     /// <summary>
     /// Blob container name for distributed locks when using Blob Lease version strategy

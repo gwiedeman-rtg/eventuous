@@ -314,7 +314,9 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
                 }
             }
 
-            var eventDataBatch = await _producerClient.CreateBatchAsync(cancellationToken).NoContext();
+            // Pin events for a given stream to a specific partition for deterministic real-time reads
+            var batchOptions   = new CreateBatchOptions { PartitionKey = stream.ToString() };
+            var eventDataBatch = await _producerClient.CreateBatchAsync(batchOptions, cancellationToken).NoContext();
             var eventPosition = 0L;
 
             foreach (var streamEvent in events) {
@@ -323,7 +325,7 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
                 if (!eventDataBatch.TryAdd(eventData)) {
                     // If the batch is full, send it and create a new batch
                     await _producerClient.SendAsync(eventDataBatch, cancellationToken).NoContext();
-                    eventDataBatch = await _producerClient.CreateBatchAsync(cancellationToken).NoContext();
+                    eventDataBatch = await _producerClient.CreateBatchAsync(batchOptions, cancellationToken).NoContext();
 
                     if (!eventDataBatch.TryAdd(eventData)) {
                         throw new InvalidOperationException("Event is too large to fit in a batch");
@@ -339,8 +341,8 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
                 _logger?.LogInformation("Successfully sent {Count} events to Event Hubs for stream {Stream}", eventDataBatch.Count, stream);
 
                 // Give Event Hubs a moment to commit the events before they become readable
-                // This helps with immediate reads after writes
-                await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken).NoContext();
+                // Increase a bit for emulator stability
+                await Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken).NoContext();
             }
 
             // Calculate next version atomically
@@ -389,24 +391,12 @@ public class AzureEventHubsEventStore : IEventStore,IDisposable {
             // We'll retry a few times to account for propagation delays
             // For recent events, try Latest first (more efficient), then fall back to Earliest if needed
             if (_useRealtimeReading) {
-                const int maxRetries = 3;
+                const int maxRetries = 5;
                 for (int attempt = 0; attempt < maxRetries; attempt++) {
                     try {
-                        // For recent reads, use EnqueuedTime to get events from the last few seconds
-                        // This captures events that were just written (Latest waits for NEW events)
-                        // For later attempts, fall back to Earliest to get all historical events
-                        EventPosition position;
-                        if (attempt == 0) {
-                            // Read events enqueued in the last 30 seconds to capture recently written events
-                            position = EventPosition.FromEnqueuedTime(DateTimeOffset.UtcNow.AddSeconds(-30));
-                            _logger?.LogDebug("Reading from Event Hubs for stream {Stream}, attempt {Attempt}, position EnqueuedTime(30s ago)",
-                                stream, attempt + 1);
-                        } else {
-                            position = EventPosition.Earliest;
-                            _logger?.LogDebug("Reading from Event Hubs for stream {Stream}, attempt {Attempt}, position Earliest",
-                                stream, attempt + 1);
-                        }
-                        var timeout = TimeSpan.FromSeconds(10 * (attempt + 1)); // Increasing timeout per attempt
+                        // For reliability with emulator, start from the beginning to ensure we see the write
+                        var position = EventPosition.Earliest;
+                        var timeout  = TimeSpan.FromSeconds(15); // generous timeout per attempt
 
                         // Read more events than needed to ensure we get all available events for de-duplication
                         var realtimeEvents = await _consumer.ReadEventsFromStream(
