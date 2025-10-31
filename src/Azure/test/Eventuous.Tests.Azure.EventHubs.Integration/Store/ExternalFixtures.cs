@@ -34,7 +34,13 @@ public abstract class ExternalStoreFixtureBase : StoreFixtureBase, IStartableFix
         var blob    = Environment.GetEnvironmentVariable("BLOB_STORAGE_CONNECTION_STRING") ?? throw new InvalidOperationException("BLOB_STORAGE_CONNECTION_STRING not set");
         var table   = Environment.GetEnvironmentVariable("TABLE_STORAGE_CONNECTION_STRING");
         var group   = Environment.GetEnvironmentVariable("EVENTHUBS_CONSUMER_GROUP")     ?? EventHubConsumerClient.DefaultConsumerGroupName;
-        var capture = Environment.GetEnvironmentVariable("CAPTURE_CONTAINER_NAME")        ?? "test-container";
+        var captureRaw = Environment.GetEnvironmentVariable("CAPTURE_CONTAINER_NAME")    ?? "test-container";
+
+        // Normalize container name for Azure Blob Storage requirements:
+        // - Must be lowercase
+        // - Can only contain letters, numbers, and hyphens (no underscores)
+        // - 3-63 characters
+        var capture = NormalizeContainerName(captureRaw);
 
         // Store connection strings for test access
         EventHubConnectionString = ehConn;
@@ -89,6 +95,41 @@ public abstract class ExternalStoreFixtureBase : StoreFixtureBase, IStartableFix
         }
         await Provider.DisposeAsync();
         GC.SuppressFinalize(this);
+    }
+
+    /// <summary>
+    /// Normalizes container name to meet Azure Blob Storage naming requirements:
+    /// - Lowercase only
+    /// - Letters, numbers, and hyphens only (no underscores)
+    /// - 3-63 characters
+    /// </summary>
+    protected static string NormalizeContainerName(string containerName) {
+        if (string.IsNullOrWhiteSpace(containerName)) {
+            return "test-container";
+        }
+
+        // Convert to lowercase and replace underscores with hyphens
+        var normalized = containerName.ToLowerInvariant().Replace('_', '-');
+
+        // Remove any invalid characters (keep only letters, numbers, hyphens)
+        normalized = System.Text.RegularExpressions.Regex.Replace(normalized, @"[^a-z0-9\-]", "");
+
+        // Ensure it starts with a letter or number (Azure requirement)
+        if (normalized.Length > 0 && !char.IsLetterOrDigit(normalized[0])) {
+            normalized = "container-" + normalized;
+        }
+
+        // Ensure minimum length (Azure requires 3 characters)
+        if (normalized.Length < 3) {
+            normalized = normalized.PadRight(3, '0');
+        }
+
+        // Ensure maximum length (Azure allows 63 characters)
+        if (normalized.Length > 63) {
+            normalized = normalized.Substring(0, 63);
+        }
+
+        return normalized;
     }
 }
 
