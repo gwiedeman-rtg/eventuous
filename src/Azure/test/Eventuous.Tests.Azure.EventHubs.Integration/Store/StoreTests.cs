@@ -50,5 +50,33 @@ public class Read(TableStorageVersionStrategyFixture fixture) : StoreReadTests<T
 }
 
 [InheritsTests]
+[ClassDataSource<ExternalBlobLeaseVersionStrategyFixture>]
+public class Read_BlobLease_NoCapture(ExternalBlobLeaseVersionStrategyFixture fixture) : StoreReadTests<ExternalBlobLeaseVersionStrategyFixture>(fixture) {
+    [Test]
+    [Category("Store")] public async Task ShouldReadOneWaitThenSend(CancellationToken ct) {
+        var stream = Helpers.GetStreamName();
+        var readCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        readCts.CancelAfter(TimeSpan.FromSeconds(30));
+        var waiting = Task.Run(async () => {
+            while (!readCts.IsCancellationRequested) {
+                var res = await fixture.EventStore.ReadEvents(stream, StreamReadPosition.Start, 1, false, readCts.Token);
+                if (res.Length > 0) return res; await Task.Delay(500, readCts.Token);
+            }
+            return Array.Empty<StreamEvent>();
+        }, readCts.Token);
+        await Task.Delay(200, ct);
+        var evt = fixture.CreateEvents(1).First();
+        await fixture.AppendEvents(stream, new[] { evt }, ExpectedStreamVersion.NoStream);
+        var seen = await waiting;
+        await Assert.That(seen.Length).IsGreaterThan(0);
+        await Assert.That(seen[0].Payload).IsEquivalentTo(evt);
+    }
+}
+
+[InheritsTests]
+[ClassDataSource<ExternalTableStorageVersionStrategyFixture>]
+public class Read_TableStorage_NoCapture(ExternalTableStorageVersionStrategyFixture fixture) : StoreReadTests<ExternalTableStorageVersionStrategyFixture>(fixture) { }
+
+[InheritsTests]
 [ClassDataSource<StoreFixture>]
 public class OtherMethods(StoreFixture fixture) : StoreOtherOpsTests<StoreFixture>(fixture);

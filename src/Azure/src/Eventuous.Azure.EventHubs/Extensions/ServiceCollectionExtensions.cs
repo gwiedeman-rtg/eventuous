@@ -69,8 +69,14 @@ public static class ServiceCollectionExtensions {
         // Register TableServiceClient conditionally if atomic versioning is enabled and table storage is configured
         services.AddSingleton(serviceProvider => {
             var options = serviceProvider.GetRequiredService<IOptions<AzureEventHubsEventStoreOptions>>().Value;
+            // Only create TableServiceClient if we have a non-empty table storage connection string
+            // Even if atomic versioning is enabled, blob lease strategy doesn't need table storage
             if (options.EnableAtomicVersioning && !string.IsNullOrWhiteSpace(options.TableStorageConnectionString)) {
-                return new TableServiceClient(options.TableStorageConnectionString);
+                var connectionString = options.TableStorageConnectionString.Trim();
+                if (string.IsNullOrWhiteSpace(connectionString)) {
+                    return null!;
+                }
+                return new TableServiceClient(connectionString);
             }
             return null!; // Will be handled in the event store constructor
         });
@@ -130,8 +136,14 @@ public static class ServiceCollectionExtensions {
         // Register TableServiceClient conditionally if atomic versioning is enabled and table storage is configured
         services.AddSingleton(serviceProvider => {
             var options = serviceProvider.GetRequiredService<IOptions<AzureEventHubsEventStoreOptions>>().Value;
+            // Only create TableServiceClient if we have a non-empty table storage connection string
+            // Even if atomic versioning is enabled, blob lease strategy doesn't need table storage
             if (options.EnableAtomicVersioning && !string.IsNullOrWhiteSpace(options.TableStorageConnectionString)) {
-                return new TableServiceClient(options.TableStorageConnectionString);
+                var connectionString = options.TableStorageConnectionString.Trim();
+                if (string.IsNullOrWhiteSpace(connectionString)) {
+                    return null!;
+                }
+                return new TableServiceClient(connectionString);
             }
             return null!; // Will be handled in the event store constructor
         });

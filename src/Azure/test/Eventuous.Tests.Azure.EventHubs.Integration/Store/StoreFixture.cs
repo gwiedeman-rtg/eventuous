@@ -5,7 +5,9 @@ using Eventuous.Azure.EventHubs;
 using Eventuous.Azure.EventHubs.Extensions;
 using Eventuous.Tests.Persistence.Base.Fixtures;
 using Eventuous.Tests.Azure.EventHubs.Integration.Fixtures;
+using Eventuous.TestHelpers;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Testcontainers.EventHubs;
 using DotNet.Testcontainers.Containers;
@@ -18,6 +20,7 @@ namespace Eventuous.Tests.Azure.EventHubs.Integration.Store;
 /// Test fixture for Azure Event Hubs integration tests using Docker containers
 /// Uses Event Hubs Emulator with internal Azurite for blob/table storage
 /// Follows the Postgres pattern with StoreFixtureBase<TContainer>
+/// Can also use external Azure resources if environment variables are set
 /// </summary>
 public class StoreFixture : StoreFixtureBase<Testcontainers.EventHubs.EventHubsContainer>, IAsyncDisposable {
     public string EventHubConnectionString { get; private set; } = null!;
@@ -38,8 +41,8 @@ public class StoreFixture : StoreFixtureBase<Testcontainers.EventHubs.EventHubsC
         // For now, we use localhost endpoints assuming Azurite ports are mapped at the Docker level.
         // If these don't work, we may need to run a separate Azurite container or disable blob capture tests.
 
-        BlobStorageConnectionString = $"DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:{AzuriteContainer.GetMappedPublicPort(10000)}/devstoreaccount1;";
-        TableStorageConnectionString = $"DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;TableEndpoint=http://127.0.0.1:{AzuriteContainer.GetMappedPublicPort(10002)}/devstoreaccount1;";
+        BlobStorageConnectionString = $"DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:{AzuriteContainer!.GetMappedPublicPort(10000)}/devstoreaccount1;";
+        TableStorageConnectionString = $"DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;TableEndpoint=http://127.0.0.1:{AzuriteContainer!.GetMappedPublicPort(10002)}/devstoreaccount1;";
 
         // Add Azure Event Hubs Event Store
         // Note: Atomic versioning is disabled by default to avoid requiring Table Storage for tests
@@ -60,11 +63,33 @@ public class StoreFixture : StoreFixtureBase<Testcontainers.EventHubs.EventHubsC
 
     protected override Testcontainers.EventHubs.EventHubsContainer CreateContainer()
     {
-        Network = EventHubsContainerBuilder.CreateNetwork();
+        // Check if external resources are configured via environment variables
+        // If they are, throw immediately before attempting Docker operations
+        var hasEventHubsEnv = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("EVENTHUBS_CONNECTION_STRING"));
+        var hasBlobEnv = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("BLOB_STORAGE_CONNECTION_STRING"));
 
-        AzuriteContainer = EventHubsContainerBuilder.CreateAzurite().WithNetwork(Network).WithNetworkAliases("evhub").Build();
+        if (hasEventHubsEnv && hasBlobEnv) {
+            throw new InvalidOperationException(
+                "External Azure resources are configured via environment variables (EVENTHUBS_CONNECTION_STRING and BLOB_STORAGE_CONNECTION_STRING). " +
+                "StoreFixture requires Docker containers. Please use ExternalBlobLeaseVersionStrategyFixture or ExternalTableStorageVersionStrategyFixture instead, " +
+                "or unset the environment variables to use Docker containers with StoreFixture."
+            );
+        }
 
-        return EventHubsContainerBuilder.CreateBuilder().WithAzuriteContainer(Network, AzuriteContainer, "evhub").Build();
+        try {
+            Network = EventHubsContainerBuilder.CreateNetwork();
+
+            AzuriteContainer = EventHubsContainerBuilder.CreateAzurite().WithNetwork(Network).WithNetworkAliases("evhub").Build();
+
+            return EventHubsContainerBuilder.CreateBuilder().WithAzuriteContainer(Network, AzuriteContainer, "evhub").Build();
+        }
+        catch (Exception ex) when (ex.GetType().Name.Contains("Docker") || ex.Message.Contains("Docker", StringComparison.OrdinalIgnoreCase) || ex.Message.Contains("docker", StringComparison.OrdinalIgnoreCase)) {
+            throw new InvalidOperationException(
+                "Docker is not available. Please ensure Docker is running, or set EVENTHUBS_CONNECTION_STRING and BLOB_STORAGE_CONNECTION_STRING " +
+                "environment variables and use ExternalBlobLeaseVersionStrategyFixture or ExternalTableStorageVersionStrategyFixture.",
+                ex
+            );
+        }
     }
 
     public override async ValueTask DisposeAsync() {
