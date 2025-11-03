@@ -10,8 +10,10 @@
       "src\\Core\\src\\Eventuous.Shared\\Eventuous.Shared.csproj",
       "src\\Azure\\src\\Eventuous.Azure.EventHubs\\Eventuous.Azure.EventHubs.csproj",
       "src\\Azure\\src\\Eventuous.Azure.ServiceBus\\Eventuous.Azure.ServiceBus.csproj",
+      "src\\Azure\\src\\Eventuous.Azure.CosmosDb\\Eventuous.Azure.CosmosDb.csproj",
       "src\\Azure\\test\\Eventuous.Tests.Azure.EventHubs\\Eventuous.Tests.Azure.EventHubs.csproj",
       "src\\Azure\\test\\Eventuous.Tests.Azure.ServiceBus\\Eventuous.Tests.Azure.ServiceBus.csproj",
+      "src\\Azure\\test\\Eventuous.Tests.Azure.CosmosDb.Integration\\Eventuous.Tests.Azure.CosmosDb.Integration.csproj",
       "src\\Core\\test\\Eventuous.Tests.Persistence.Base\\Eventuous.Tests.Persistence.Base.csproj"
     ]
   }

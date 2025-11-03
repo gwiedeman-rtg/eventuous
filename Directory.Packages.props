@@ -58,6 +58,7 @@
     <PackageVersion Include="Azure.Messaging.EventHubs.Processor" Version="5.12.0" />
     <PackageVersion Include="Azure.Storage.Blobs" Version="12.26.0" />
     <PackageVersion Include="Azure.Data.Tables" Version="12.8.0" />
+    <PackageVersion Include="Microsoft.Azure.Cosmos" Version="3.49.0" />
     <PackageVersion Include="Apache.Avro" Version="1.11.3" />
     <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="3.3.4" PrivateAssets="all" />
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.10.0" PrivateAssets="all" />
