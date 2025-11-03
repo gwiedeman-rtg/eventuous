@@ -22,16 +22,15 @@ public static class CosmosDbContainerBuilder {
             .WithImage("mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:latest")
             .WithEnvironment("AZURE_COSMOS_EMULATOR_PARTITION_COUNT", "10")
             .WithEnvironment("AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE", "false")
-            .WithExposedPort(8081)
-            //.WithEnvironment("AZURE_COSMOS_EMULATOR_IP_ADDRESS_OVERRIDE", "127.0.0.1")
-            //.WithPortBinding(8081, 8081)
-            //.WithWaitStrategy(
-            //    Wait.ForUnixContainer()
-            //        .UntilHttpRequestIsSucceeded(request =>
-            //            request.ForPath("/_explorer/emulator.pem")
-            //                    .ForPort(8081)
-            //                    .ForStatusCode(System.Net.HttpStatusCode.OK))
-            //)
+            .WithEnvironment("AZURE_COSMOS_EMULATOR_IP_ADDRESS_OVERRIDE", "127.0.0.1")
+            .WithPortBinding(8081, true) // Use random port to avoid conflicts
+            .WithWaitStrategy(
+                Wait.ForUnixContainer()
+                    // Wait for the emulator to log that it's ready
+                    // The emulator logs various startup messages - we wait for any indication of readiness
+                    // This pattern matches common startup completion messages
+                    .UntilMessageIsLogged("(?s).*(Started|started|ready|Ready|listening).*")
+            )
             .Build();
     }
 }
