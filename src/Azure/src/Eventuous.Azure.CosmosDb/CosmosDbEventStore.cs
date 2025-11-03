@@ -370,24 +370,57 @@ public class CosmosDbEventStore : IEventStore, IDisposable {
         try {
             var streamId = stream.ToString();
 
-            var query = new QueryDefinition(
-                "SELECT VALUE MAX(c.streamPosition) FROM c WHERE c.streamId = @streamId"
+            // First check if the stream has any events
+            // This is necessary because MAX() on an empty set can return confusing results
+            var countQuery = new QueryDefinition(
+                "SELECT VALUE COUNT(1) FROM c WHERE c.streamId = @streamId"
             ).WithParameter("@streamId", streamId);
 
-            var iterator = _container.GetItemQueryIterator<long>(
-                query,
+            var countIterator = _container.GetItemQueryIterator<int>(
+                countQuery,
                 requestOptions: new QueryRequestOptions {
                     PartitionKey = new PartitionKey(streamId)
                 }
             );
 
-            if (iterator.HasMoreResults) {
-                var response = await iterator.ReadNextAsync(cancellationToken).NoContext();
-                var maxPos   = response.FirstOrDefault();
+            int count = 0;
+            if (countIterator.HasMoreResults) {
+                var countResponse = await countIterator.ReadNextAsync(cancellationToken).NoContext();
+                count = countResponse.FirstOrDefault();
 
-                // If maxPos is 0 or greater, the stream exists and version is maxPos
-                // If no results, stream doesn't exist (return null)
-                return maxPos >= 0 ? maxPos : null;
+                // If count is 0, stream doesn't exist
+                if (count == 0) {
+                    return null;
+                }
+            }
+
+            // Stream exists, get the max position
+            var maxQuery = new QueryDefinition(
+                "SELECT VALUE MAX(c.streamPosition) FROM c WHERE c.streamId = @streamId"
+            ).WithParameter("@streamId", streamId);
+
+            var maxIterator = _container.GetItemQueryIterator<long>(
+                maxQuery,
+                requestOptions: new QueryRequestOptions {
+                    PartitionKey = new PartitionKey(streamId)
+                }
+            );
+
+            if (maxIterator.HasMoreResults) {
+                var response = await maxIterator.ReadNextAsync(cancellationToken).NoContext();
+                var maxPos   = response.FirstOrDefault();
+                
+                // Verify data integrity: max position should be count - 1
+                // Positions start at 0, so if we have 3 events, max position should be 2
+                var expectedMaxPos = count - 1;
+                if (maxPos != expectedMaxPos) {
+                    _logger?.LogWarning(
+                        "Stream version inconsistency detected for {Stream}: max position is {MaxPos} but expected {ExpectedMaxPos} based on count {Count}. This may indicate missing or duplicate events.",
+                        stream, maxPos, expectedMaxPos, count
+                    );
+                }
+                
+                return maxPos;
             }
 
             return null;

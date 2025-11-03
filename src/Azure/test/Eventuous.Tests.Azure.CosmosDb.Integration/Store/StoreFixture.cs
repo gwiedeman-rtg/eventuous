@@ -10,21 +10,18 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Azure.Cosmos;
-using DotNet.Testcontainers.Containers;
+using Testcontainers.CosmosDb;
 
 namespace Eventuous.Tests.Azure.CosmosDb.Integration.Store;
 
 /// <summary>
 /// Test fixture for Azure Cosmos DB integration tests using Docker containers
-/// Uses Cosmos DB Emulator container
-/// Follows the Postgres pattern with StoreFixtureBase<TContainer>
+/// Uses Cosmos DB Emulator container with official Testcontainers.CosmosDb package
 /// </summary>
-public class StoreFixture : StoreFixtureBase<DockerContainer>, IAsyncDisposable {
+public class StoreFixture : StoreFixtureBase<CosmosDbContainer>, IAsyncDisposable {
     public string ConnectionString { get; private set; } = null!;
     public string AccountEndpoint { get; private set; } = null!;
     public string AccountKey { get; private set; } = null!;
-    
-    private CosmosDbHttpClientHandler? _handler;
 
     public StoreFixture() : base(LogLevel.Information) { }
 
@@ -34,38 +31,47 @@ public class StoreFixture : StoreFixtureBase<DockerContainer>, IAsyncDisposable 
 
         // Give the Cosmos DB emulator additional time to fully initialize
         // Even after it logs "Started", it may need more time for the HTTP/HTTPS endpoints to be ready
-        // This is especially true when starting multiple partitions (10 in our case)
-        await Task.Delay(TimeSpan.FromSeconds(5));
+        // According to Microsoft docs: https://learn.microsoft.com/en-us/azure/cosmos-db/how-to-develop-emulator
+        // The emulator needs time to fully start up before accepting connections
+        await Task.Delay(TimeSpan.FromSeconds(10));
+
+        // Manually ensure database and container are created now that emulator is ready
+        // The initialization in SetupServices might have failed if emulator wasn't ready
+        var cosmosClient = Provider.GetRequiredService<CosmosClient>();
+        var options = Provider.GetRequiredService<CosmosDbEventStoreOptions>();
+        
+        try {
+            var databaseResponse = await cosmosClient.CreateDatabaseIfNotExistsAsync(options.Database);
+            var containerProperties = new ContainerProperties {
+                Id = options.Container,
+                PartitionKeyPath = options.PartitionKeyPath ?? "/streamId"
+            };
+            await databaseResponse.Database.CreateContainerIfNotExistsAsync(containerProperties);
+        } catch (Exception ex) {
+            throw new InvalidOperationException(
+                $"Failed to create Cosmos DB resources after delay. Database: '{options.Database}', Container: '{options.Container}'. " +
+                "The emulator may not be fully ready yet.",
+                ex
+            );
+        }
     }
 
     protected override void SetupServices(IServiceCollection services) {
-        // Get connection details from container
-        // Cosmos DB Emulator uses HTTPS on port 8081
-        // Note: InitializeAsync adds a delay after container start to ensure port mappings are available
-        var port = Container.GetMappedPublicPort(8081);
-
-        // Use localhost instead of container hostname to ensure SSL validation bypass works
-        // The port is mapped to localhost, so we connect via localhost
-        // This ensures the SSL validation bypass in ServiceCollectionExtensions is triggered
-        AccountEndpoint = $"https://localhost:{port}";
-        AccountKey = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw=="; // Cosmos DB Emulator default key
-        ConnectionString = $"AccountEndpoint={AccountEndpoint};AccountKey={AccountKey};";
-
-        // Create CosmosClient with custom HTTP handler for the emulator
-        // The emulator returns internal container IPs that need to be redirected to localhost
-        // We cache the handler and create new HttpClient instances from it
-        var innerHandler = new HttpClientHandler {
-            ServerCertificateCustomValidationCallback = 
-                HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
-        };
-        _handler = new CosmosDbHttpClientHandler(port, innerHandler);
+        // Use the official Testcontainers.CosmosDb connection string
+        // This container has built-in support for the emulator's quirks
+        ConnectionString = Container.GetConnectionString();
         
+        // The container provides an HttpClient that handles SSL certificate issues
+        // We keep a reference to it without disposing (the container manages its lifecycle)
+        var httpClient = Container.HttpClient;
+
+        // Create CosmosClient with the container's pre-configured HttpClient
         var cosmosClientOptions = new CosmosClientOptions {
             ConnectionMode = ConnectionMode.Gateway,
-            HttpClientFactory = () => new HttpClient(_handler, disposeHandler: false)
+            HttpClientFactory = () => httpClient
         };
 
-        var cosmosClient = new CosmosClient(AccountEndpoint, AccountKey, cosmosClientOptions);
+        var cosmosClient = new CosmosClient(ConnectionString, cosmosClientOptions);
 
         // Register the CosmosClient and use the overload that accepts an existing client
         services.AddCosmosDbEventStore(
@@ -78,7 +84,7 @@ public class StoreFixture : StoreFixtureBase<DockerContainer>, IAsyncDisposable 
         // EventStore is already registered by AddCosmosDbEventStore, base class will get it automatically
     }
 
-    protected override DockerContainer CreateContainer() {
+    protected override CosmosDbContainer CreateContainer() {
         try {
             return CosmosDbContainerBuilder.Create();
         } catch (Exception ex) when (ex.GetType().Name.Contains("Docker") || ex.Message.Contains("Docker", StringComparison.OrdinalIgnoreCase) || ex.Message.Contains("docker", StringComparison.OrdinalIgnoreCase)) {
@@ -87,11 +93,6 @@ public class StoreFixture : StoreFixtureBase<DockerContainer>, IAsyncDisposable 
                 ex
             );
         }
-    }
-
-    public override async ValueTask DisposeAsync() {
-        _handler?.Dispose();
-        await base.DisposeAsync();
     }
 }
 

@@ -159,18 +159,34 @@ public static class ServiceCollectionExtensions {
     /// Initializes Cosmos DB database and container if they don't exist
     /// </summary>
     private static async Task InitializeCosmosResources(CosmosClient client, CosmosDbEventStoreOptions options) {
-        // Create database if not exists
-        var databaseResponse = await client.CreateDatabaseIfNotExistsAsync(options.Database);
-        var database = databaseResponse.Database;
+        try {
+            // Create database if not exists
+            var databaseResponse = await client.CreateDatabaseIfNotExistsAsync(options.Database);
+            var database = databaseResponse.Database;
 
-        // Create container if not exists
-        // The partition key path must be specified at creation time
-        var containerProperties = new ContainerProperties {
-            Id = options.Container,
-            PartitionKeyPath = options.PartitionKeyPath ?? "/streamId"
-        };
+            // Create container if not exists
+            // The partition key path must be specified at creation time
+            var containerProperties = new ContainerProperties {
+                Id = options.Container,
+                PartitionKeyPath = options.PartitionKeyPath ?? "/streamId"
+            };
 
-        await database.CreateContainerIfNotExistsAsync(containerProperties);
+            var containerResponse = await database.CreateContainerIfNotExistsAsync(containerProperties);
+
+            // Verify the container was created successfully
+            if (containerResponse.StatusCode != System.Net.HttpStatusCode.Created &&
+                containerResponse.StatusCode != System.Net.HttpStatusCode.OK) {
+                throw new InvalidOperationException(
+                    $"Failed to create container '{options.Container}'. Status: {containerResponse.StatusCode}"
+                );
+            }
+        } catch (Exception ex) {
+            throw new InvalidOperationException(
+                $"Failed to initialize Cosmos DB resources. Database: '{options.Database}', Container: '{options.Container}'. " +
+                "Ensure the Cosmos DB emulator is running and accessible.",
+                ex
+            );
+        }
     }
 }
 
