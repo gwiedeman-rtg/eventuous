@@ -131,11 +131,9 @@ public static class ServiceCollectionExtensions {
 
         services.AddSingleton(options);
 
-        // Register the provided CosmosClient and initialize resources
-        services.AddSingleton<CosmosClient>(_ => {
-            InitializeCosmosResources(cosmosClient, options).GetAwaiter().GetResult();
-            return cosmosClient;
-        });
+        // Register the provided CosmosClient WITHOUT initializing resources
+        // Resources should be initialized after the emulator is ready (e.g., in test fixtures)
+        services.AddSingleton(cosmosClient);
 
         // Register Event Store
         services.AddSingleton<IEventStore>(serviceProvider => {
