@@ -23,6 +23,8 @@ public class StoreFixture : StoreFixtureBase<DockerContainer>, IAsyncDisposable 
     public string ConnectionString { get; private set; } = null!;
     public string AccountEndpoint { get; private set; } = null!;
     public string AccountKey { get; private set; } = null!;
+    
+    private CosmosDbHttpClientHandler? _handler;
 
     public StoreFixture() : base(LogLevel.Information) { }
 
@@ -51,16 +53,16 @@ public class StoreFixture : StoreFixtureBase<DockerContainer>, IAsyncDisposable 
 
         // Create CosmosClient with custom HTTP handler for the emulator
         // The emulator returns internal container IPs that need to be redirected to localhost
+        // We cache the handler and create new HttpClient instances from it
+        var innerHandler = new HttpClientHandler {
+            ServerCertificateCustomValidationCallback = 
+                HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+        };
+        _handler = new CosmosDbHttpClientHandler(port, innerHandler);
+        
         var cosmosClientOptions = new CosmosClientOptions {
             ConnectionMode = ConnectionMode.Gateway,
-            HttpClientFactory = () => {
-                var innerHandler = new HttpClientHandler {
-                    ServerCertificateCustomValidationCallback = 
-                        HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
-                };
-                var handler = new CosmosDbHttpClientHandler(port, innerHandler);
-                return new HttpClient(handler);
-            }
+            HttpClientFactory = () => new HttpClient(_handler, disposeHandler: false)
         };
 
         var cosmosClient = new CosmosClient(AccountEndpoint, AccountKey, cosmosClientOptions);
@@ -85,6 +87,11 @@ public class StoreFixture : StoreFixtureBase<DockerContainer>, IAsyncDisposable 
                 ex
             );
         }
+    }
+
+    public override async ValueTask DisposeAsync() {
+        _handler?.Dispose();
+        await base.DisposeAsync();
     }
 }
 

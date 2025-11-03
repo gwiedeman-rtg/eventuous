@@ -3,6 +3,7 @@
 
 using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Containers;
+using Testcontainers.CosmosDb;
 
 namespace Eventuous.Tests.Azure.CosmosDb.Integration.Fixtures;
 
@@ -18,7 +19,7 @@ public static class CosmosDbContainerBuilder {
         // Azure Cosmos DB Emulator runs on Linux and requires specific ports
         // Port 8081 is the SQL API endpoint (HTTP)
         // The emulator uses HTTPS internally but we can access via HTTP
-        return (DockerContainer)new ContainerBuilder()
+        return new CosmosDbBuilder()
             .WithImage("mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:latest")
             .WithEnvironment("AZURE_COSMOS_EMULATOR_PARTITION_COUNT", "10")
             .WithEnvironment("AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE", "false")
