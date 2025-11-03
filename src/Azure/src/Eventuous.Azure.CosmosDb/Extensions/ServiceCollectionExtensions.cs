@@ -166,9 +166,10 @@ public static class ServiceCollectionExtensions {
 
             // Create container if not exists
             // The partition key path must be specified at creation time
+            var partitionKeyPath = options.PartitionKeyPath ?? "/streamId";
             var containerProperties = new ContainerProperties {
                 Id = options.Container,
-                PartitionKeyPath = options.PartitionKeyPath ?? "/streamId"
+                PartitionKeyPath = partitionKeyPath
             };
 
             var containerResponse = await database.CreateContainerIfNotExistsAsync(containerProperties);
@@ -178,6 +179,18 @@ public static class ServiceCollectionExtensions {
                 containerResponse.StatusCode != System.Net.HttpStatusCode.OK) {
                 throw new InvalidOperationException(
                     $"Failed to create container '{options.Container}'. Status: {containerResponse.StatusCode}"
+                );
+            }
+
+            // Verify container exists and has correct partition key by reading its metadata
+            var container = database.GetContainer(options.Container);
+            var containerReadResponse = await container.ReadContainerAsync();
+
+            // Verify partition key path matches
+            if (containerReadResponse.Resource.PartitionKeyPath != partitionKeyPath) {
+                throw new InvalidOperationException(
+                    $"Container '{options.Container}' exists but has wrong partition key path. " +
+                    $"Expected: '{partitionKeyPath}', Actual: '{containerReadResponse.Resource.PartitionKeyPath}'"
                 );
             }
         } catch (Exception ex) {

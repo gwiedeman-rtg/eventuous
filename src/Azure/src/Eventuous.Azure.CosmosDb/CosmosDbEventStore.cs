@@ -45,6 +45,11 @@ public class CosmosDbEventStore : IEventStore, IDisposable {
         _database  = _cosmosClient.GetDatabase(_options.Database);
         _container = _database.GetContainer(_options.Container);
 
+        // Verify container exists - batch operations require this
+        // Queries might appear to work even if container doesn't exist (returning empty results)
+        // but batch writes will fail with 404 if container doesn't exist
+        VerifyContainerExists().GetAwaiter().GetResult();
+
         _logger?.LogInformation(
             "CosmosDB Event Store initialized: Database={Database}, Container={Container}, PartitionKeyPath={PartitionKeyPath}",
             _options.Database, _options.Container, _partitionKeyPath
@@ -363,6 +368,26 @@ public class CosmosDbEventStore : IEventStore, IDisposable {
         } catch (Exception ex) {
             _logger?.LogError(ex, "Failed to delete stream {Stream}", stream);
             throw;
+        }
+    }
+
+    async Task VerifyContainerExists() {
+        try {
+            // Try to read container metadata - this will throw if container doesn't exist
+            await _container.ReadContainerAsync();
+            _logger?.LogDebug("Container {Container} verified to exist", _options.Container);
+        } catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound) {
+            _logger?.LogError(
+                "Container '{Container}' does not exist in database '{Database}'. " +
+                "Ensure the container has been created with partition key path '{PartitionKeyPath}'. " +
+                "This error typically occurs when initialization failed silently.",
+                _options.Container, _options.Database, _partitionKeyPath
+            );
+            throw new InvalidOperationException(
+                $"Container '{_options.Container}' does not exist in database '{_options.Database}'. " +
+                $"Ensure the container has been created with partition key path '{_partitionKeyPath}'.",
+                ex
+            );
         }
     }
 
