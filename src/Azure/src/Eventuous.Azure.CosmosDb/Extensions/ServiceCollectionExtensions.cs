@@ -28,8 +28,15 @@ public static class ServiceCollectionExtensions {
 
         // Register CosmosClient as singleton with initialization
         services.AddSingleton<CosmosClient>(serviceProvider => {
+            // Configure custom serializer that respects JsonPropertyName attributes
+            var jsonOptions = new System.Text.Json.JsonSerializerOptions {
+                PropertyNamingPolicy = null // Use exact JsonPropertyName values, don't apply camelCase
+            };
+            var customSerializer = new CosmosJsonSerializer(jsonOptions);
+
             var cosmosClientOptions = new CosmosClientOptions {
                 ConnectionMode = ConnectionMode.Gateway,
+                Serializer = customSerializer,
                 // For local emulator, we need to bypass SSL validation
                 // This is safe for local development but should never be used in production
                 HttpClientFactory = () => {

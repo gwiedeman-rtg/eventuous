@@ -5,6 +5,7 @@ using System.Runtime.Serialization;
 using System.Text;
 using Eventuous.Diagnostics;
 using Eventuous.Producers;
+using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Logging;
 using static Eventuous.DeserializationResult;
 using static Eventuous.Diagnostics.PersistenceEventSource;
@@ -137,16 +138,80 @@ public class CosmosDbEventStore : IEventStore, IDisposable {
             }
 
             // Use transactional batch for atomic append (CosmosDB supports up to 100 operations per batch)
-            var batch = _container.CreateTransactionalBatch(new PartitionKey(streamId));
+            // The partition key must match the partition key path defined in the container (/streamId)
+            var partitionKey = new PartitionKey(streamId);
+            var batch = _container.CreateTransactionalBatch(partitionKey);
+
+            _logger?.LogDebug(
+                "Creating batch for stream {Stream} with partition key {PartitionKey}, {Count} events",
+                stream, streamId, eventDocs.Count
+            );
 
             foreach (var doc in eventDocs) {
+                // Verify partition key value matches the document's streamId
+                if (doc.StreamId != streamId) {
+                    throw new InvalidOperationException(
+                        $"Partition key mismatch: batch partition key is '{streamId}' but document StreamId is '{doc.StreamId}'"
+                    );
+                }
+                
+                // Log the serialized document using System.Text.Json to see what CosmosDB will receive
+                // Note: CosmosDB SDK uses System.Text.Json by default, but we need to verify property names match
+                var docJson = System.Text.Json.JsonSerializer.Serialize(doc);
+                Console.WriteLine($"DEBUG: Adding event to batch - Id={doc.Id}, StreamId={doc.StreamId}, MessageType={doc.MessageType}, StreamPosition={doc.StreamPosition}");
+                Console.WriteLine($"DEBUG: Serialized JSON: {docJson}");
+                System.Diagnostics.Debug.WriteLine($"DEBUG: Serialized JSON: {docJson}");
+                
+                _logger?.LogDebug(
+                    "Adding event to batch: Id={Id}, StreamId={StreamId}, MessageType={MessageType}, StreamPosition={StreamPosition}, SerializedJson={Json}",
+                    doc.Id, doc.StreamId, doc.MessageType, doc.StreamPosition, docJson
+                );
+                
                 batch = batch.CreateItem(doc);
             }
 
-            var batchResponse = await batch.ExecuteAsync(cancellationToken).NoContext();
+            TransactionalBatchResponse batchResponse;
+            try {
+                batchResponse = await batch.ExecuteAsync(cancellationToken).NoContext();
+            } catch (CosmosException cosmosEx) {
+                // Catch CosmosException to get detailed error information
+                // Output to console so it shows in test output
+                var errorDetails = $"CosmosDB EXCEPTION: StatusCode={cosmosEx.StatusCode}, Message={cosmosEx.Message}, ActivityId={cosmosEx.ActivityId}, ResponseBody={cosmosEx.ResponseBody}";
+                Console.WriteLine($"ERROR: {errorDetails}");
+                System.Diagnostics.Debug.WriteLine($"ERROR: {errorDetails}");
+                
+                _logger?.LogError(
+                    cosmosEx,
+                    "CosmosDB exception during batch operation for stream {Stream}. StatusCode: {StatusCode}, Message: {Message}, ActivityId: {ActivityId}, ResponseBody: {ResponseBody}",
+                    stream, cosmosEx.StatusCode, cosmosEx.Message, cosmosEx.ActivityId, cosmosEx.ResponseBody
+                );
+                throw new AppendToStreamException(stream, new InvalidOperationException(
+                    $"CosmosDB batch operation failed: StatusCode={cosmosEx.StatusCode}, Message={cosmosEx.Message}, ActivityId={cosmosEx.ActivityId}, ResponseBody={cosmosEx.ResponseBody}",
+                    cosmosEx
+                ));
+            }
 
             if (!batchResponse.IsSuccessStatusCode) {
-                var errorMessage = batchResponse.ErrorMessage ?? $"Batch operation failed with status {batchResponse.StatusCode}";
+                // Get detailed error information from CosmosDB
+                var errorMessage = $"Batch operation failed with status {batchResponse.StatusCode}";
+                
+                // Try to get more details from the first failed operation if available
+                if (batchResponse.Count > 0) {
+                    var firstResult = batchResponse[0];
+                    if (!firstResult.IsSuccessStatusCode) {
+                        errorMessage = $"{errorMessage}. First operation error: StatusCode={firstResult.StatusCode}";
+                    }
+                }
+                
+                // Output to console so it shows in test output
+                Console.WriteLine($"ERROR: Batch operation failed for stream {stream}. Status: {batchResponse.StatusCode}, Error: {errorMessage}, RequestCharge: {batchResponse.RequestCharge}");
+                System.Diagnostics.Debug.WriteLine($"ERROR: Batch operation failed: {errorMessage}");
+                
+                _logger?.LogError(
+                    "Batch operation failed for stream {Stream}. Status: {Status}, Error: {Error}, RequestCharge: {RequestCharge}",
+                    stream, batchResponse.StatusCode, errorMessage, batchResponse.RequestCharge
+                );
+                
                 throw new AppendToStreamException(stream, new InvalidOperationException(errorMessage));
             }
 

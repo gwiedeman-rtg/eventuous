@@ -50,7 +50,9 @@ public class StoreFixture : StoreFixtureBase<CosmosDbContainer>, IAsyncDisposabl
         var serializerProperty = typeof(StoreFixtureBase).GetProperty("Serializer");
         serializerProperty?.SetValue(this, serializer);
         
+        // Register serializer (both concrete and interface, matching base class pattern)
         services.AddSingleton(serializer);
+        services.AddSingleton<IEventSerializer>(serializer);
         services.AddSingleton(TypeMapper);
         services.AddLogging(b => ConfigureLogging(b.ForTests(LogLevel.Information)).SetMinimumLevel(LogLevel.Information));
         SetupServices(services);
@@ -107,9 +109,17 @@ public class StoreFixture : StoreFixtureBase<CosmosDbContainer>, IAsyncDisposabl
         var httpClient = Container.HttpClient;
 
         // Create CosmosClient with the container's pre-configured HttpClient
+        // Use custom serializer that respects JsonPropertyName attributes
+        var jsonOptions = new System.Text.Json.JsonSerializerOptions {
+            // JsonPropertyName attributes will be respected
+            PropertyNamingPolicy = null // Don't use camelCase policy, use exact JsonPropertyName values
+        };
+        var customSerializer = new CosmosJsonSerializer(jsonOptions);
+        
         var cosmosClientOptions = new CosmosClientOptions {
             ConnectionMode = ConnectionMode.Gateway,
-            HttpClientFactory = () => httpClient
+            HttpClientFactory = () => httpClient,
+            Serializer = customSerializer
         };
 
         var cosmosClient = new CosmosClient(ConnectionString, cosmosClientOptions);
