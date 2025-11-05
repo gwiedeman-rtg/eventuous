@@ -233,11 +233,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{BEE59F29-95C
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Eventuous.Testing", "src\Testing\src\Eventuous.Testing\Eventuous.Testing.csproj", "{879EE7B2-68D1-D5CE-803F-67D7F2C82697}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Eventuous.Tests.Azure.EventHubs.Unit", "src\Azure\test\Eventuous.Tests.Azure.EventHubs.Unit\Eventuous.Tests.Azure.EventHubs.Unit.csproj", "{2A87C1AF-E455-4E5E-B709-01964488B4FC}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Eventuous.Tests.Azure.EventHubs.Integration", "src\Azure\test\Eventuous.Tests.Azure.EventHubs.Integration\Eventuous.Tests.Azure.EventHubs.Integration.csproj", "{93261E6D-3A60-4F85-997E-01498462B26D}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Eventuous.Tests.Azure.CosmosDb.Integration", "src\Azure\test\Eventuous.Tests.Azure.CosmosDb.Integration\Eventuous.Tests.Azure.CosmosDb.Integration.csproj", "{B9174DC9-B1BF-5EDD-9606-19FBCDD9A1FB}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Eventuous.Tests.Azure.CosmosDb", "src\Azure\test\Eventuous.Tests.Azure.CosmosDb.csproj", "{B9174DC9-B1BF-5EDD-9606-19FBCDD9A1FB}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

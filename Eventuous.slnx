@@ -17,7 +17,7 @@
     <Project Path="src/Azure/src/Eventuous.Azure.ServiceBus/Eventuous.Azure.ServiceBus.csproj" />
   </Folder>
   <Folder Name="/Brokers/Azure/test/">
-    <Project Path="src/Azure/test/Eventuous.Tests.Azure.CosmosDb.Integration/Eventuous.Tests.Azure.CosmosDb.Integration.csproj" />
+    <Project Path="src/Azure/test/Eventuous.Tests.Azure.CosmosDb/Eventuous.Tests.Azure.CosmosDb.csproj" />
     <Project Path="src/Azure/test/Eventuous.Tests.Azure.ServiceBus/Eventuous.Tests.Azure.ServiceBus.csproj" />
   </Folder>
   <Folder Name="/Brokers/GooglePubSub/" />
