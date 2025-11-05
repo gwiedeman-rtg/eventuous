@@ -1,0 +1,87 @@
+// Copyright (C) Eventuous HQ OÜ. All rights reserved
+// Licensed under the Apache License, Version 2.0.
+
+using Eventuous.Azure.EventHubs;
+using Eventuous.Azure.EventHubs.Extensions;
+using Eventuous.Azure.EventHubs.Versioning;
+using Eventuous.Tests.Persistence.Base.Fixtures;
+using Eventuous.Tests.Azure.EventHubs.Integration.Fixtures;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Testcontainers.EventHubs;
+using DotNet.Testcontainers.Containers;
+using Testcontainers.Azurite;
+using DotNet.Testcontainers.Networks;
+
+namespace Eventuous.Tests.Azure.EventHubs.Integration.Store;
+
+/// <summary>
+/// Test fixture for Azure Event Hubs integration tests using NonAtomicVersionStrategy
+/// Uses Event Hubs Emulator with internal Azurite for blob/table storage
+/// Follows the Postgres pattern with StoreFixtureBase<TContainer>
+/// </summary>
+public class NonAtomicVersionStrategyFixture : StoreFixtureBase<Testcontainers.EventHubs.EventHubsContainer> {
+    public string EventHubConnectionString { get; private set; } = null!;
+    public string BlobStorageConnectionString { get; private set; } = null!;
+    public string TableStorageConnectionString { get; private set; } = null!;
+
+    public AzuriteContainer? AzuriteContainer { get; private set; } = null;
+
+    public INetwork? Network { get; private set; } = null;
+
+    public NonAtomicVersionStrategyFixture() : base(LogLevel.Information) { }
+
+    protected override void SetupServices(IServiceCollection services) {
+        // Get connection string from container (base class provides Container property)
+        EventHubConnectionString = Container.GetConnectionString();
+
+        // NOTE: The Event Hubs emulator includes internal Azurite, but the ports may not be exposed.
+        // For now, we use localhost endpoints assuming Azurite ports are mapped at the Docker level.
+        // If these don't work, we may need to run a separate Azurite container or disable blob capture tests.
+
+        BlobStorageConnectionString = $"DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:{AzuriteContainer.GetMappedPublicPort(10000)}/devstoreaccount1;";
+        TableStorageConnectionString = $"DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;TableEndpoint=http://127.0.0.1:{AzuriteContainer.GetMappedPublicPort(10002)}/devstoreaccount1;";
+
+        // Note: NonAtomicVersionStrategy requires the EventStore instance in its constructor,
+        // creating a circular dependency. Therefore, it cannot be injected directly via DI.
+        // Instead, we rely on the factory/configuration approach which handles this circular
+        // dependency by passing 'this' when creating NonAtomicVersionStrategy.
+
+        // Add Azure Event Hubs Event Store with NonAtomicVersionStrategy via configuration
+        // The factory will create NonAtomicVersionStrategy with the EventStore instance
+        services.AddAzureEventHubsEventStore(options => {
+            options.EventHubConnectionString = EventHubConnectionString;
+            options.EventHubName = "test-hub";
+            options.BlobStorageConnectionString = BlobStorageConnectionString;
+            options.CaptureContainerName = "test-container";
+            options.ConsumerGroup = "$Default";
+            options.UseRealtimeReading = true;
+            options.EnableAtomicVersioning = false; // Disabled for NonAtomicVersionStrategy
+            // Note: The DefaultVersionStrategyFactory will create NonAtomicVersionStrategy
+            // and pass the EventStore instance to it, resolving the circular dependency
+        });
+
+        // Register the EventStore service - base class will automatically set EventStore property
+        //services.AddEventStore<AzureEventHubsEventStore>();
+    }
+
+    protected override Testcontainers.EventHubs.EventHubsContainer CreateContainer()
+    {
+        Network = EventHubsContainerBuilder.CreateNetwork();
+
+        AzuriteContainer = EventHubsContainerBuilder.CreateAzurite().WithNetwork(Network).WithNetworkAliases("evhub").Build();
+
+        return EventHubsContainerBuilder.CreateBuilder().WithAzuriteContainer(Network, AzuriteContainer, "evhub").Build();
+    }
+
+    public override async ValueTask DisposeAsync() {
+        if (AzuriteContainer != null)
+            await AzuriteContainer.DisposeAsync();
+
+        if (Network != null)
+            await Network.DisposeAsync();
+
+        await base.DisposeAsync();
+    }
+
+}

@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.Messaging.EventHubs" />
+    <PackageReference Include="Azure.Messaging.EventHubs.Processor" />
+    <PackageReference Include="Azure.Storage.Blobs" />
+    <PackageReference Include="Azure.Data.Tables" />
+    <PackageReference Include="Apache.Avro" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(CoreRoot)\Eventuous.Persistence\Eventuous.Persistence.csproj" />
+    <ProjectReference Include="$(CoreRoot)\Eventuous.Producers\Eventuous.Producers.csproj" />
+    <ProjectReference Include="$(CoreRoot)\Eventuous.Subscriptions\Eventuous.Subscriptions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Azure.Messaging.EventHubs" />
+    <Using Include="Azure.Messaging.EventHubs.Producer" />
+    <Using Include="Azure.Messaging.EventHubs.Consumer" />
+    <Using Include="Azure.Messaging.EventHubs.Processor" />
+    <Using Include="Azure.Storage.Blobs" />
+    <Using Include="Azure.Data.Tables" />
+    <Using Include="Microsoft.Extensions.Logging" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="$(CoreRoot)\Eventuous.Shared\Tools\TaskExtensions.cs">
+      <Link>Tools\TaskExtensions.cs</Link>
+    </Compile>
+    <Compile Include="$(CoreRoot)\Eventuous.Shared\Tools\Ensure.cs">
+      <Link>Tools\Ensure.cs</Link>
+    </Compile>
+    <Using Include="Eventuous.Tools" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Eventuous.Tests.Azure.EventHubs" />
+  </ItemGroup>
+
+</Project>
