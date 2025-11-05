@@ -1,0 +1,66 @@
+version: '3.7'
+
+services:
+
+  cosmosdb:
+    container_name: evt_cosmosdb_emulator
+    image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:latest
+    ports:
+      - "8081:8081"
+      - "10251:10251"
+      - "10252:10252"
+      - "10253:10253"
+      - "10254:10254"
+    environment:
+      - AZURE_COSMOS_EMULATOR_PARTITION_COUNT=1
+      - AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE=false
+    healthcheck:
+      test: "curl -f http://localhost:8081/_explorer/emulator.pem || exit 1"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mongo:
+    container_name: evt_cosmosdb_mongo
+    image: mongo
+    ports:
+      - '27017:27017'
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: mongoadmin
+      MONGO_INITDB_ROOT_PASSWORD: secret
+
+  zipkin:
+    image: openzipkin/zipkin
+    container_name: evt_cosmosdb_zipkin
+    ports:
+      - "9411:9411"
+
+  prometheus:
+    container_name: evt_cosmosdb_prometheus
+    image: prom/prometheus:v2.17.1
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+
+  grafana:
+    container_name: evt_cosmosdb_grafana
+    image: grafana/grafana:6.7.2
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./grafana/datasources.yml:/etc/grafana/provisioning/datasources/prometheus.yaml
+      - ./grafana/dashboards:/dashboards
+
+  seq:
+    image: datalust/seq:latest
+    container_name: evt_cosmosdb_seq
+    environment:
+      - ACCEPT_EULA=Y
+    ports:
+      - "5341:80"
+
+networks:
+  default:
+    name: eventuous-demo
+
