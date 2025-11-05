@@ -69,8 +69,8 @@ public static class ServiceCollectionExtensions {
             return client;
         });
 
-        // Register Event Store
-        services.AddSingleton<IEventStore>(serviceProvider => {
+        // Register Event Store using AddEventStore to register interfaces properly
+        services.AddEventStore<CosmosDbEventStore>(serviceProvider => {
             var cosmosClient = serviceProvider.GetRequiredService<CosmosClient>();
             var logger = serviceProvider.GetService<ILogger<CosmosDbEventStore>>();
             var serializer = serviceProvider.GetService<IEventSerializer>();
@@ -142,8 +142,8 @@ public static class ServiceCollectionExtensions {
         // Resources should be initialized after the emulator is ready (e.g., in test fixtures)
         services.AddSingleton(cosmosClient);
 
-        // Register Event Store
-        services.AddSingleton<IEventStore>(serviceProvider => {
+        // Register Event Store using AddEventStore to register interfaces properly
+        services.AddEventStore<CosmosDbEventStore>(serviceProvider => {
             var logger = serviceProvider.GetService<ILogger<CosmosDbEventStore>>();
             var serializer = serviceProvider.GetService<IEventSerializer>();
             var metaSerializer = serviceProvider.GetService<IMetadataSerializer>();

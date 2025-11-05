@@ -31,7 +31,7 @@ public class StoreFixture : StoreFixtureBase<CosmosDbContainer>, IAsyncDisposabl
         // Start container first
         var container = CreateContainer();
         await container.StartAsync();
-        
+
         // Set Container property via reflection (it has private setter)
         var containerProperty = typeof(StoreFixtureBase<CosmosDbContainer>).GetProperty("Container");
         containerProperty?.SetValue(this, container);
@@ -45,11 +45,11 @@ public class StoreFixture : StoreFixtureBase<CosmosDbContainer>, IAsyncDisposabl
         // Now set up services with the fully-ready container
         var services = new ServiceCollection();
         var serializer = new DefaultEventSerializer(TestPrimitives.DefaultOptions, TypeMapper);
-        
+
         // Set Serializer property via reflection (it has private setter)
         var serializerProperty = typeof(StoreFixtureBase).GetProperty("Serializer");
         serializerProperty?.SetValue(this, serializer);
-        
+
         // Register serializer (both concrete and interface, matching base class pattern)
         services.AddSingleton(serializer);
         services.AddSingleton<IEventSerializer>(serializer);
@@ -58,11 +58,11 @@ public class StoreFixture : StoreFixtureBase<CosmosDbContainer>, IAsyncDisposabl
         SetupServices(services);
 
         Provider = services.BuildServiceProvider();
-        
+
         // Initialize Cosmos DB resources NOW (after delay) before creating EventStore
         var cosmosClient = Provider.GetRequiredService<CosmosClient>();
         var options = Provider.GetRequiredService<CosmosDbEventStoreOptions>();
-        
+
         try {
             var databaseResponse = await cosmosClient.CreateDatabaseIfNotExistsAsync(options.Database);
             var containerProperties = new ContainerProperties {
@@ -70,15 +70,15 @@ public class StoreFixture : StoreFixtureBase<CosmosDbContainer>, IAsyncDisposabl
                 PartitionKeyPath = options.PartitionKeyPath ?? "/streamId"
             };
             var containerResponse = await databaseResponse.Database.CreateContainerIfNotExistsAsync(containerProperties);
-            
+
             // Verify container was created
-            if (containerResponse.StatusCode != System.Net.HttpStatusCode.Created && 
+            if (containerResponse.StatusCode != System.Net.HttpStatusCode.Created &&
                 containerResponse.StatusCode != System.Net.HttpStatusCode.OK) {
                 throw new InvalidOperationException(
                     $"Failed to create container '{options.Container}'. Status: {containerResponse.StatusCode}"
                 );
             }
-            
+
             // Verify container exists by reading it
             var cosmosContainer = databaseResponse.Database.GetContainer(options.Container);
             await cosmosContainer.ReadContainerAsync();
@@ -103,7 +103,7 @@ public class StoreFixture : StoreFixtureBase<CosmosDbContainer>, IAsyncDisposabl
         // Use the official Testcontainers.CosmosDb connection string
         // This container has built-in support for the emulator's quirks
         ConnectionString = Container.GetConnectionString();
-        
+
         // The container provides an HttpClient that handles SSL certificate issues
         // We keep a reference to it without disposing (the container manages its lifecycle)
         var httpClient = Container.HttpClient;
@@ -115,7 +115,7 @@ public class StoreFixture : StoreFixtureBase<CosmosDbContainer>, IAsyncDisposabl
             PropertyNamingPolicy = null // Don't use camelCase policy, use exact JsonPropertyName values
         };
         var customSerializer = new CosmosJsonSerializer(jsonOptions);
-        
+
         var cosmosClientOptions = new CosmosClientOptions {
             ConnectionMode = ConnectionMode.Gateway,
             HttpClientFactory = () => httpClient,
@@ -125,14 +125,13 @@ public class StoreFixture : StoreFixtureBase<CosmosDbContainer>, IAsyncDisposabl
         var cosmosClient = new CosmosClient(ConnectionString, cosmosClientOptions);
 
         // Register the CosmosClient and use the overload that accepts an existing client
+        // AddCosmosDbEventStore now registers the event store interfaces internally
         services.AddCosmosDbEventStore(
             cosmosClient,
             "eventstore-test",
             "events",
             "/streamId"
         );
-
-        // EventStore is already registered by AddCosmosDbEventStore, base class will get it automatically
     }
 
     protected override CosmosDbContainer CreateContainer() {
